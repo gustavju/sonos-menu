@@ -19,7 +19,7 @@ protocol SonosControlling: Sendable {
     func getGroupVolume(on device: Device, groupID: String) async throws -> Int
     func getVolume(on device: Device) async throws -> Int
     func fetchDeviceInfo(from device: Device) async throws -> (householdID: String, bootSeq: Int)
-    func addMember(_ memberID: String, fromHost: String, to device: Device, groupID: String, bootSeq: Int) async throws
-    func removeMember(_ memberID: String, from device: Device, groupID: String, bootSeq: Int) async throws
+    func joinGroup(member: Device, coordinatorID: String) async throws
+    func leaveGroup(member: Device) async throws
     func fetchNowPlaying(on device: Device) async throws -> Playback
 }

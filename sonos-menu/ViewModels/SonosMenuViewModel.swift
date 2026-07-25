@@ -39,8 +39,16 @@ final class SonosMenuViewModel {
         selectedGroup?.rooms.sorted { $0.name < $1.name } ?? []
     }
 
+    var allHouseholdRooms: [Room] {
+        selectedHousehold?.rooms.sorted { $0.name < $1.name } ?? []
+    }
+
     var selectedGroupPlayback: Playback {
         selectedGroup?.playback ?? Playback()
+    }
+
+    func isRoomInSelectedGroup(_ room: Room) -> Bool {
+        selectedGroup?.rooms.contains(where: { $0.id == room.id }) ?? false
     }
 
     init(repository: SonosRepository? = nil) {
@@ -106,6 +114,10 @@ final class SonosMenuViewModel {
 
     func toggleRoomMembership(_ room: Room) {
         guard let selectedGroup else { return }
+        // Pin the current selection so that removing a room — which creates a new
+        // single-room group on the device — doesn't cause the UI to jump to that
+        // new group on the next refresh.
+        selectedGroupID = selectedGroup.id
         let isMember = selectedGroup.rooms.contains(where: { $0.id == room.id })
         if isMember {
             repository.removeRoom(room, from: selectedGroup)

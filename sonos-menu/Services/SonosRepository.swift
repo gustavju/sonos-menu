@@ -333,11 +333,11 @@ final class SonosRepository {
 
     func addRoom(_ room: Room, to group: Group) {
         Task {
-            guard let device = await commandDevice(for: group),
-                  let topology = topologyFor(group: group),
-                  let bootSeq = topology.memberBootSeqs[room.id] ?? deviceStore[room.deviceID]?.bootSeq else { return }
+            guard let memberDevice = deviceStore[room.deviceID],
+                  let coordinatorDevice = await coordinatorDevice(for: group) else { return }
             do {
-                try await controller.addMember(room.id, fromHost: room.deviceID, to: device, groupID: group.id, bootSeq: bootSeq)
+                try await controller.joinGroup(member: memberDevice, coordinatorID: coordinatorDevice.id)
+                try? await Task.sleep(for: .milliseconds(750))
                 await refresh()
             } catch {
                 snapshot.lastError = error.localizedDescription
@@ -347,11 +347,10 @@ final class SonosRepository {
 
     func removeRoom(_ room: Room, from group: Group) {
         Task {
-            guard let device = await commandDevice(for: group),
-                  let topology = topologyFor(group: group),
-                  let bootSeq = topology.memberBootSeqs[room.id] ?? deviceStore[room.deviceID]?.bootSeq else { return }
+            guard let memberDevice = deviceStore[room.deviceID] else { return }
             do {
-                try await controller.removeMember(room.id, from: device, groupID: group.id, bootSeq: bootSeq)
+                try await controller.leaveGroup(member: memberDevice)
+                try? await Task.sleep(for: .milliseconds(750))
                 await refresh()
             } catch {
                 snapshot.lastError = error.localizedDescription
@@ -369,6 +368,31 @@ final class SonosRepository {
                 snapshot.lastError = error.localizedDescription
             }
         }
+    }
+
+    /// Returns the coordinator device for a group. Used when joining a room,
+    /// where the joining speaker's AVTransport URI is set to `x-rincon:<coordinatorID>`.
+    private func coordinatorDevice(for group: Group) async -> Device? {
+        guard let topology = topologyFor(group: group) else { return nil }
+        guard let topologyGroup = topology.groups.first(where: { $0.id == group.id }) else { return nil }
+
+        let coordinatorID = topologyGroup.coordinatorID
+        if let cached = deviceStore[coordinatorID], await isReachable(cached) {
+            return cached
+        }
+
+        if let host = topology.memberLocations[coordinatorID] {
+            let synthesized = Device.topologyHost(id: coordinatorID, host: host)
+            if await isReachable(synthesized) {
+                return synthesized
+            }
+        }
+
+        return await bestDevice(
+            for: topologyGroup,
+            devices: deviceStore,
+            locations: topology.memberLocations
+        )
     }
 
     private func commandDevice(for group: Group) async -> Device? {

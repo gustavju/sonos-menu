@@ -63,9 +63,11 @@ struct ContentView: View {
     @ViewBuilder
     private var roomListSection: some View {
         RoomList(
-            rooms: viewModel.selectedGroupRooms,
+            rooms: viewModel.allHouseholdRooms,
+            isMember: viewModel.isRoomInSelectedGroup,
             onVolumeChange: viewModel.setVolume,
-            onToggleMute: viewModel.toggleMute
+            onToggleMute: viewModel.toggleMute,
+            onToggleMembership: viewModel.toggleRoomMembership
         )
     }
 

@@ -212,32 +212,28 @@ actor SonosController: SonosControlling {
 
     // MARK: - Grouping
 
-    func addMember(_ memberID: String, fromHost: String, to device: Device, groupID: String, bootSeq: Int) async throws {
-        print("Adding device \(memberID) via coordinator \(device.host) to \(groupID) bootSeq=\(bootSeq)")
+    func joinGroup(member: Device, coordinatorID: String) async throws {
         let body = soapEnvelope(
-            service: .groupManagement,
-            action: "AddMember",
+            service: .avTransport,
+            action: "SetAVTransportURI",
             args: [
-                "GroupID": groupID,
-                "MemberID": memberID,
-                "BootSeq": String(bootSeq)
+                "InstanceID": "0",
+                "CurrentURI": "x-rincon:\(coordinatorID)",
+                "CurrentURIMetaData": ""
             ]
         )
-        _ = try await post(body: body, to: device, service: .groupManagement)
+        _ = try await post(body: body, to: member, service: .avTransport)
     }
 
-    func removeMember(_ memberID: String, from device: Device, groupID: String, bootSeq: Int) async throws {
-        print("Removing device \(memberID) via coordinator \(device.host) from \(groupID) bootSeq=\(bootSeq)")
+    func leaveGroup(member: Device) async throws {
         let body = soapEnvelope(
-            service: .groupManagement,
-            action: "RemoveMember",
+            service: .avTransport,
+            action: "BecomeCoordinatorOfStandaloneGroup",
             args: [
-                "GroupID": groupID,
-                "MemberID": memberID,
-                "BootSeq": String(bootSeq)
+                "InstanceID": "0"
             ]
         )
-        _ = try await post(body: body, to: device, service: .groupManagement)
+        _ = try await post(body: body, to: member, service: .avTransport)
     }
 
     func fetchDeviceInfo(from device: Device) async throws -> (householdID: String, bootSeq: Int) {
