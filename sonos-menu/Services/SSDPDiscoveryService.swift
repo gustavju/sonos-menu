@@ -12,6 +12,9 @@ final class SSDPDiscoveryService: ObservableObject {
     @Published private(set) var isScanning = false
     @Published private(set) var lastError: String?
 
+    /// Called on the MainActor when a discovery pass finishes, regardless of success.
+    var onDiscoveryFinished: (@MainActor () -> Void)?
+
     private let ssdpMulticastHost = "239.255.255.250"
     private let ssdpMulticastPort: UInt16 = 1900
     private let searchTarget = "urn:schemas-upnp-org:device:ZonePlayer:1"
@@ -52,11 +55,13 @@ final class SSDPDiscoveryService: ObservableObject {
                 await MainActor.run { [weak self] in
                     self?.devices = found.isEmpty ? existing : found
                     self?.isScanning = false
+                    self?.onDiscoveryFinished?()
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     self?.lastError = error.localizedDescription
                     self?.isScanning = false
+                    self?.onDiscoveryFinished?()
                 }
             }
         }

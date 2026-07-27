@@ -15,10 +15,18 @@ struct HouseholdSnapshot: Sendable {
     var lastRefresh: Date?
 }
 
+/// Called on the MainActor whenever the repository finishes a refresh that changes
+/// the available groups, so the view model can adjust its selection.
+@MainActor
+protocol SonosRepositoryDelegate: AnyObject {
+    func sonosRepository(_ repository: SonosRepository, didUpdateGroups groups: [Group])
+}
+
 @MainActor
 @Observable
 final class SonosRepository {
     var snapshot = HouseholdSnapshot()
+    weak var delegate: SonosRepositoryDelegate?
 
     /// External infrastructure. Override for tests by passing concrete instances.
     private let discovery: SSDPDiscoveryService
@@ -39,6 +47,11 @@ final class SonosRepository {
     ) {
         self.discovery = discovery
         self.controller = controller
+        discovery.onDiscoveryFinished = { [weak self] in
+            Task { @MainActor [weak self] in
+                await self?.refresh()
+            }
+        }
     }
 
     // MARK: - Lifecycle
@@ -130,8 +143,14 @@ final class SonosRepository {
             volumes: volumes,
             mutes: mutes
         )
-
+        let groupsChanged = !newHouseholds.elementsEqual(snapshot.households, by: { $0.groups.map(\.id) == $1.groups.map(\.id) })
         snapshot.households = newHouseholds
+        snapshot.lastRefresh = Date()
+
+        if groupsChanged {
+            let allGroups = newHouseholds.flatMap(\.groups)
+            delegate?.sonosRepository(self, didUpdateGroups: allGroups)
+        }
         snapshot.lastRefresh = Date()
     }
 

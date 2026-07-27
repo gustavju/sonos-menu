@@ -10,7 +10,7 @@ import SwiftUI
 
 @MainActor
 @Observable
-final class SonosMenuViewModel {
+final class SonosMenuViewModel: SonosRepositoryDelegate {
     private let repository: SonosRepository
 
     var households: [Household] { repository.snapshot.households }
@@ -56,6 +56,7 @@ final class SonosMenuViewModel {
             discovery: SSDPDiscoveryService(),
             controller: SonosController()
         )
+        self.repository.delegate = self
     }
 
     // MARK: - Lifecycle
@@ -83,6 +84,18 @@ final class SonosMenuViewModel {
 
     func selectGroup(_ group: Group?) {
         selectedGroupID = group?.id
+    }
+
+    // MARK: - SonosRepositoryDelegate
+
+    func sonosRepository(_ repository: SonosRepository, didUpdateGroups groups: [Group]) {
+        guard selectedGroupID == nil else { return }
+
+        let playingGroups = groups.filter { $0.playback.transportState.isPlaying }
+        if playingGroups.count == 1, let onlyPlaying = playingGroups.first {
+            selectedHouseholdID = onlyPlaying.householdID
+            selectedGroupID = onlyPlaying.id
+        }
     }
 
     // MARK: - Actions
