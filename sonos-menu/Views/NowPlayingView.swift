@@ -48,12 +48,10 @@ struct NowPlayingView<BottomContent: View>: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
-            if !playback.album.isEmpty {
-                Text(playback.album)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Text(playback.album.isEmpty ? "" : playback.album)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 

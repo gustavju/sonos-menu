@@ -9,6 +9,18 @@ struct GroupList: View {
     let groups: [Group]
     let selectedGroupID: String?
     let onSelect: (Group) -> Void
+    
+    private let rowHeight: CGFloat = 34
+    private let spacing: CGFloat = 4
+
+    private var maxHeight: CGFloat {
+        rowHeight * 2 + spacing // Show at most 2 rows
+    }
+
+    private var contentHeight: CGFloat {
+        CGFloat(groups.count) * rowHeight +
+        CGFloat(max(groups.count - 1, 0)) * spacing
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -18,7 +30,7 @@ struct GroupList: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(groups) { group in
+                    ForEach(groups.sorted { $0.rooms.count > $1.rooms.count }) { group in
                         GroupRow(
                             group: group,
                             isSelected: group.id == selectedGroupID,
@@ -26,8 +38,9 @@ struct GroupList: View {
                         )
                     }
                 }
+                .safeAreaPadding(.trailing)
             }
-            .frame(minHeight: 50, maxHeight: 160)
+            .frame(height: min(contentHeight, maxHeight))
         }
     }
 }

@@ -11,6 +11,18 @@ struct RoomList: View {
     let onVolumeChange: (Double, Room) -> Void
     let onToggleMute: (Room) -> Void
     let onToggleMembership: (Room) -> Void
+    
+    private let rowHeight: CGFloat = 44
+    private let spacing: CGFloat = 4
+
+    private var maxHeight: CGFloat {
+        rowHeight * 3 + spacing // Show at most 3 rows
+    }
+
+    private var contentHeight: CGFloat {
+        CGFloat(rooms.count) * rowHeight +
+        CGFloat(max(rooms.count - 1, 0)) * spacing
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -20,7 +32,7 @@ struct RoomList: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(rooms) { room in
+                    ForEach(rooms.sorted(by: ) { $0.name > $1.name }) { room in
                         RoomVolumeRow(
                             room: room,
                             isMember: isMember(room),
@@ -33,8 +45,9 @@ struct RoomList: View {
                         )
                     }
                 }
+                .safeAreaPadding(.trailing)
             }
-            .frame(minHeight: 80, maxHeight: 220)
+            .frame(height: min(contentHeight, maxHeight))
         }
     }
 }
@@ -66,7 +79,7 @@ struct RoomVolumeRow: View {
                 .buttonStyle(.plain)
                 .disabled(!canToggleMembership)
 
-                if room.isCoordinator {
+                if isMember && room.isCoordinator {
                     Text("coordinator")
                         .font(.caption2)
                         .foregroundStyle(Color.accentColor)
