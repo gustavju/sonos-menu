@@ -77,6 +77,10 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         repository.scanForDevices()
     }
 
+    func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+
     func selectHousehold(_ household: Household?) {
         selectedHouseholdID = household?.id
         selectedGroupID = nil

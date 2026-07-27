@@ -104,6 +104,14 @@ struct ContentView: View {
                 .buttonStyle(.borderless)
                 .controlSize(.small)
             }
+            
+            Spacer()
+            
+            Button(action: viewModel.quitApp) {
+                Image(systemName: "power")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
         }
     }
 }
