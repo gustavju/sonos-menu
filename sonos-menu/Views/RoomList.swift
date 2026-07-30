@@ -11,6 +11,7 @@ struct RoomList: View {
     let onVolumeChange: (Double, Room) -> Void
     let onToggleMute: (Room) -> Void
     let onToggleMembership: (Room) -> Void
+    @State private var isExpanded: Bool = true
     
     private let rowHeight: CGFloat = 44
     private let spacing: CGFloat = 4
@@ -25,11 +26,7 @@ struct RoomList: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Rooms")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
+        DisclosureGroup(isExpanded: $isExpanded) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(rooms.sorted(by: ) { $0.name > $1.name }) { room in
@@ -48,6 +45,10 @@ struct RoomList: View {
                 .safeAreaPadding(.trailing)
             }
             .frame(height: min(contentHeight, maxHeight))
+        } label: {
+            Text("Rooms")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
