@@ -7,35 +7,66 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var viewModel = SonosMenuViewModel()
-
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HouseholdSelector(
-                households: viewModel.households,
-                selectedHouseholdID: $viewModel.selectedHouseholdID,
-                onSelect: viewModel.selectHousehold
-            )
-
-            headerSection
-
-            Divider()
-
-            groupListSection
-
-            Divider()
-
-            roomListSection
-
-            //if let error = viewModel.lastError {
-            //    ErrorBanner(message: error)
-            //}
-
+    
+        if viewModel.allHouseholdRooms.isEmpty {
             footerStatus
+                .padding(12)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                HouseholdSelector(
+                    households: viewModel.households,
+                    selectedHouseholdID: $viewModel.selectedHouseholdID,
+                    onSelect: viewModel.selectHousehold
+                )
+
+                headerSection
+
+                Divider()
+
+                groupListSection
+
+                Divider()
+
+                roomListSection
+
+                //if let error = viewModel.lastError {
+                //    ErrorBanner(message: error)
+                //}
+
+                footerStatus
+            }
+            .padding()
+            .frame(width: 320)
+            .onAppear(perform: viewModel.onMenuAppear)
+            .onDisappear(perform: viewModel.onMenuDisappear)
+            .background {
+                AsyncImage(url: viewModel.selectedGroupPlayback.artURL) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .saturation(1.2)
+                            .blur(radius: 50)
+                            .scaleEffect(1.15) // avoids blurred edges
+                            .overlay(
+                                LinearGradient(
+                                    colors: [
+                                        .black.opacity(0.25),
+                                        .black.opacity(0.55)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                    } else {
+                        Color.clear
+                    }
+                }
+                .clipped()
+            }
         }
-        .padding()
-        .frame(width: 320)
-        .onAppear(perform: viewModel.onMenuAppear)
-        .onDisappear(perform: viewModel.onMenuDisappear)
     }
 
     @ViewBuilder
