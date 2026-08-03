@@ -19,6 +19,7 @@ struct NowPlayingView<BottomContent: View>: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 trackInfo
+                trackDurationBar
                 bottomContent()
             }
             .background(
@@ -52,6 +53,38 @@ struct NowPlayingView<BottomContent: View>: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+        }
+    }
+    
+    @ViewBuilder
+    private var trackDurationBar: some View {
+        VStack(spacing: 3) {
+            GeometryReader { proxy in
+                let progress = playback.duration > 0
+                    ? playback.relTime / playback.duration
+                    : 0.0
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.tertiary)
+
+                    Capsule()
+                        .fill(Color.accentColor)
+                        .frame(width: proxy.size.width * progress)
+                }
+            }
+            .frame(height: 3)
+
+            HStack {
+                Text(playback.relTime.toTrackDisplayString)
+
+                Spacer()
+
+                Text(playback.duration.toTrackDisplayString)
+            }
+            .font(.caption2)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
         }
     }
 

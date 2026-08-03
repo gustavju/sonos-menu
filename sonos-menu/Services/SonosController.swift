@@ -392,6 +392,9 @@ actor SonosController: SonosControlling {
     private func parsePositionInfo(_ data: Data, device: Device) -> Playback {
         guard let xml = try? XMLDocument(data: data, options: []),
               let root = xml.rootElement() else { return Playback() }
+        
+        let relTime = (try? root.nodes(forXPath: "//RelTime"))?.first?.stringValue ?? "00:00:00"
+        let trackDuration = (try? root.nodes(forXPath: "//TrackDuration"))?.first?.stringValue ?? "00:00:00"
 
         let track = (try? root.nodes(forXPath: "//TrackMetaData"))?.first?.stringValue ?? ""
 
@@ -430,13 +433,16 @@ actor SonosController: SonosControlling {
             .stringValue
             .flatMap { Playback.TransportState(rawValue: $0) } ?? .unknown
 
-        print("parsePositionInfo: title='\(title)' artist='\(artist)' album='\(album)' artURL='\(artURL?.absoluteString ?? "")' state='\(transportState)'")
+        print("parsePositionInfo: title='\(title)' artist='\(artist)' album='\(album)' artURL='\(artURL?.absoluteString ?? "")' state='\(transportState)' relTime='\(relTime)' trackDuration='\(trackDuration)'")
+        
         return Playback(
             title: title,
             artist: artist,
             album: album,
             artURL: artURL,
-            transportState: transportState
+            transportState: transportState,
+            relTime: relTime,
+            duration: trackDuration
         )
     }
 }
