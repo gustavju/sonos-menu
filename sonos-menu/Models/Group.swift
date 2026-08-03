@@ -50,12 +50,21 @@ struct Group: Identifiable, Codable, Hashable, Sendable {
         if !name.isEmpty, !isTechnical {
             return name
         }
-        let names = rooms.map(\.name).filter { !$0.isEmpty }.sorted()
-        switch names.count {
-        case 0: return "Group"
-        case 1: return names[0]
-        case 2: return "\(names[0]) + \(names[1])"
-        default: return "\(names[0]) + \(names.count - 1) more"
+        
+        let orderedRooms = rooms
+            .filter { !$0.name.isEmpty }
+            .sorted { lhs, rhs in
+                if lhs.isCoordinator != rhs.isCoordinator {
+                    return lhs.isCoordinator
+                }
+                return lhs.name < rhs.name
+            }
+        
+        switch orderedRooms.count {
+            case 0: return "Group"
+            case 1: return orderedRooms.first!.name
+            case 2: return "\(orderedRooms.first!.name) + \(orderedRooms[1].name)"
+            default: return "\(orderedRooms.first!.name) + \(orderedRooms.count - 1) more"
         }
     }
 }
