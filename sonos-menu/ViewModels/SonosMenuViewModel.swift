@@ -12,6 +12,7 @@ import SwiftUI
 @Observable
 final class SonosMenuViewModel: SonosRepositoryDelegate {
     private let repository: SonosRepository
+    private var volumeChangeTask: Task<Void, Never>?
 
     var households: [Household] { repository.snapshot.households }
     var isScanning: Bool { repository.snapshot.isScanning }
@@ -125,6 +126,17 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         var updatedRoom = room
         updatedRoom.volume = Int(volume)
         repository.setVolume(updatedRoom.volume, for: updatedRoom)
+    }
+
+    /// Called continuously while a room volume slider is dragged.
+    /// Debounces the network command so dragging doesn't fire many requests.
+    func setRoomVolumeDebounced(_ volume: Double, for room: Room) {
+        volumeChangeTask?.cancel()
+        volumeChangeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard let self else { return }
+            self.setVolume(volume, for: room)
+        }
     }
 
     func toggleMute(for room: Room) {

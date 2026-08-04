@@ -101,7 +101,7 @@ struct ContentView: View {
         RoomList(
             rooms: viewModel.allHouseholdRooms,
             isMember: viewModel.isRoomInSelectedGroup,
-            onVolumeChange: viewModel.setVolume,
+            onVolumeChange: viewModel.setRoomVolumeDebounced,
             onToggleMute: viewModel.toggleMute,
             onToggleMembership: viewModel.toggleRoomMembership
         )
