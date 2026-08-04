@@ -34,6 +34,8 @@ final class SonosRepository {
 
     private var refreshTask: Task<Void, Never>?
 
+    private var isRefreshing = false
+
     /// In-memory cache of latest topology details needed for SOAP command targeting.
     /// Maps group ID to the latest topology and discovered-or-synthesized devices.
     private var topologyStore: [String: ZoneGroupTopology] = [:]
@@ -97,10 +99,11 @@ final class SonosRepository {
 
     @MainActor
     private func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         snapshot.isScanning = discovery.isScanning
-        if let discoveryError = discovery.lastError, snapshot.lastError == nil {
-            snapshot.lastError = discoveryError
-        }
 
         let discovered = discovery.discoveredDevices
         if !discovered.isEmpty {
@@ -192,7 +195,6 @@ final class SonosRepository {
             let allGroups = newHouseholds.flatMap(\.groups)
             delegate?.sonosRepository(self, didUpdateGroups: allGroups)
         }
-        snapshot.lastRefresh = Date()
     }
 
     @MainActor
@@ -200,7 +202,7 @@ final class SonosRepository {
         // Prefer a known coordinator from a previously selected group or any discovered device.
         for (_, topology) in topologyStore {
             for group in topology.groups {
-                if let device = await bestDevice(for: group, devices: deviceStore, locations: topology.memberLocations) {
+                if let device = bestDevice(for: group, devices: deviceStore, locations: topology.memberLocations) {
                     if let fresh = try? await controller.fetchTopology(from: device) {
                         return fresh
                     }
@@ -272,52 +274,28 @@ final class SonosRepository {
 
     // MARK: - Command targeting
 
-    /// The coordinator is the canonical target, but devices sometimes report a coordinator
-    /// that isn't reachable via HTTP. Fall back to any reachable group member.
+    /// The coordinator is the canonical target. If no coordinator device is known,
+    /// fall back to any known group member.
     private func bestDevice(
         for topologyGroup: TopologyGroup,
         devices: [String: Device],
         locations: [String: String]
-    ) async -> Device? {
+    ) -> Device? {
         if let coordinatorHost = locations[topologyGroup.coordinatorID] {
-            let device = devices[topologyGroup.coordinatorID]
+            return devices[topologyGroup.coordinatorID]
                 ?? Device.topologyHost(id: topologyGroup.coordinatorID, host: coordinatorHost)
-            if await isReachable(device) {
-                return device
-            }
         }
 
         for memberID in topologyGroup.memberIDs {
             guard let host = locations[memberID] else { continue }
-            let device = devices[memberID] ?? Device.topologyHost(id: memberID, host: host)
-            if await isReachable(device) {
-                return device
-            }
+            return devices[memberID] ?? Device.topologyHost(id: memberID, host: host)
         }
 
         // Last resort: any discovered device in the same group, sorted coordinator first.
-        let candidates = devices.values
+        return devices.values
             .filter { topologyGroup.memberIDs.contains($0.id) }
             .sorted { ($0.id == topologyGroup.coordinatorID) ? true : ($1.id != topologyGroup.coordinatorID) }
-        for device in candidates {
-            if await isReachable(device) { return device }
-        }
-
-        return nil
-    }
-
-    private func isReachable(_ device: Device) async -> Bool {
-        guard let url = URL(string: "http://\(device.host):1400/xml/device_description.xml") else { return false }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 1
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            let ok = (response as? HTTPURLResponse)?.statusCode == 200
-            if !ok { print("isReachable: \(device.host) not OK") }
-            return ok
-        } catch {
-            return false
-        }
+            .first
     }
 
     // MARK: - User actions
@@ -437,18 +415,15 @@ final class SonosRepository {
         guard let topologyGroup = topology.groups.first(where: { $0.id == group.id }) else { return nil }
 
         let coordinatorID = topologyGroup.coordinatorID
-        if let cached = deviceStore[coordinatorID], await isReachable(cached) {
+        if let cached = deviceStore[coordinatorID] {
             return cached
         }
 
         if let host = topology.memberLocations[coordinatorID] {
-            let synthesized = Device.topologyHost(id: coordinatorID, host: host)
-            if await isReachable(synthesized) {
-                return synthesized
-            }
+            return Device.topologyHost(id: coordinatorID, host: host)
         }
 
-        return await bestDevice(
+        return bestDevice(
             for: topologyGroup,
             devices: deviceStore,
             locations: topology.memberLocations
@@ -458,7 +433,7 @@ final class SonosRepository {
     private func commandDevice(for group: Group) async -> Device? {
         guard let topology = topologyFor(group: group) else { return nil }
         guard let topologyGroup = topology.groups.first(where: { $0.id == group.id }) else { return nil }
-        return await bestDevice(
+        return bestDevice(
             for: topologyGroup,
             devices: deviceStore,
             locations: topology.memberLocations
