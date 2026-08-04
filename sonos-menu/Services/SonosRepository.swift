@@ -99,6 +99,7 @@ final class SonosRepository {
 
     @MainActor
     private func refresh() async {
+        guard menuIsOpen else { return }
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
