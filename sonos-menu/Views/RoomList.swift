@@ -11,7 +11,7 @@ struct RoomList: View {
     let onVolumeChange: (Double, Room) -> Void
     let onToggleMute: (Room) -> Void
     let onToggleMembership: (Room) -> Void
-    @State private var isExpanded: Bool = true
+    @State private var isExpanded: Bool = false
     
     private let rowHeight: CGFloat = 44
     private let spacing: CGFloat = 4

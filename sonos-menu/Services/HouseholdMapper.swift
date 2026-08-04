@@ -26,7 +26,8 @@ struct HouseholdMapper {
         devices: [Device],
         playbackResponses: [String: Playback] = [:],
         volumes: [String: Int] = [:],
-        mutes: [String: Bool] = [:]
+        mutes: [String: Bool] = [:],
+        groupVolumes: [String: Int] = [:]
     ) -> [Household] {
         var deviceByID: [String: Device] = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
 
@@ -74,7 +75,8 @@ struct HouseholdMapper {
                     coordinatorID: group.coordinatorID,
                     householdID: householdID,
                     rooms: rooms,
-                    playback: playbackResponses[group.id] ?? Playback()
+                    playback: playbackResponses[group.id] ?? Playback(),
+                    volume: groupVolumes[group.id] ?? 0
                 )
             }
             .sorted { $0.name < $1.name }

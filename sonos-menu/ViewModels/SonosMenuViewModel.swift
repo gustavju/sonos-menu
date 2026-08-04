@@ -119,6 +119,11 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         repository.previousTrack(for: group)
     }
 
+    func setGroupVolume(_ volume: Double) {
+        guard let group = selectedGroup else { return }
+        repository.setGroupVolume(Int(volume), for: group)
+    }
+
     func setVolume(_ volume: Double, for room: Room) {
         var updatedRoom = room
         updatedRoom.volume = Int(volume)

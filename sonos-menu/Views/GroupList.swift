@@ -9,21 +9,30 @@ struct GroupList: View {
     let groups: [Group]
     let selectedGroupID: String?
     let onSelect: (Group) -> Void
+    let onVolumeChange: (Double, Group) -> Void
     
     private let rowHeight: CGFloat = 34
+    private let selectedRowExtraHeight: CGFloat = 34
     private let spacing: CGFloat = 4
 
+    private var selectedGroupIDs: Set<String> {
+        Set(groups.filter { $0.id == selectedGroupID }.map(\.id))
+    }
+
     private var maxHeight: CGFloat {
-        rowHeight * 2 + spacing // Show at most 2 rows
+        rowHeight * 2 + selectedRowExtraHeight + spacing // Show at most 2 rows
     }
 
     private var contentHeight: CGFloat {
-        CGFloat(groups.count) * rowHeight +
+        let selectedCount = groups.filter { selectedGroupIDs.contains($0.id) }.count
+        let extraHeight = CGFloat(selectedCount) * selectedRowExtraHeight
+        return CGFloat(groups.count) * rowHeight +
+        extraHeight +
         CGFloat(max(groups.count - 1, 0)) * spacing
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Groups")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -34,6 +43,7 @@ struct GroupList: View {
                         GroupRow(
                             group: group,
                             isSelected: group.id == selectedGroupID,
+                            onVolumeChange: { onVolumeChange($0, group) },
                             onTap: { onSelect(group) }
                         )
                     }
@@ -48,26 +58,37 @@ struct GroupList: View {
 struct GroupRow: View {
     let group: Group
     let isSelected: Bool
+    let onVolumeChange: (Double) -> Void
     let onTap: () -> Void
 
     var body: some View {
-        HStack {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(group.displayName)
-                    .font(.system(size: 13))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(group.displayName)
+                        .font(.system(size: 13))
 
-                Text("\(group.memberCount) room\(group.memberCount == 1 ? "" : "s")")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    Text("\(group.memberCount) room\(group.memberCount == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
             }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
 
-            Spacer()
+            if isSelected {
+                GroupVolumeSlider(
+                    volume: group.volume,
+                    isEnabled: true,
+                    onEditingFinished: onVolumeChange
+                )
+            }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
         .padding(.vertical, 2)
     }
 }
@@ -84,7 +105,8 @@ struct GroupRow: View {
             )
         ],
         selectedGroupID: "group-1",
-        onSelect: { _ in }
+        onSelect: { _ in },
+        onVolumeChange: { _, _ in }
     )
     .padding()
 }

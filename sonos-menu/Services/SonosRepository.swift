@@ -127,8 +127,8 @@ final class SonosRepository {
 
         var volumes: [String: Int] = [:]
         let mutes: [String: Bool] = [:]
-        for group in topology.groups {
-            for memberID in group.memberIDs {
+        for topologyGroup in topology.groups {
+            for memberID in topologyGroup.memberIDs {
                 guard let device = deviceStore[memberID] else { continue }
                 if let volume = try? await controller.getVolume(on: device) {
                     volumes[memberID] = volume
@@ -136,12 +136,42 @@ final class SonosRepository {
             }
         }
 
+        var groupVolumes: [String: Int] = [:]
+        groupVolumes = await withTaskGroup(of: (String, Int)?.self) { [weak self] groupTask in
+            guard let self else { return [:] }
+            for topologyGroup in topology.groups {
+                groupTask.addTask { [weak self] in
+                    guard let self else { return nil }
+                    let device = await self.bestDevice(
+                        for: topologyGroup,
+                        devices: self.deviceStore,
+                        locations: topology.memberLocations
+                    )
+                    guard let device else { return nil }
+                    do {
+                        let volume = try await self.controller.getGroupVolume(on: device, groupID: topologyGroup.id)
+                        return (topologyGroup.id, volume)
+                    } catch {
+                        return nil
+                    }
+                }
+            }
+            var result: [String: Int] = [:]
+            for await value in groupTask {
+                if let (groupID, volume) = value {
+                    result[groupID] = volume
+                }
+            }
+            return result
+        }
+
         let newHouseholds = HouseholdMapper.map(
             topology: topology,
             devices: Array(deviceStore.values),
             playbackResponses: playbackResponses,
             volumes: volumes,
-            mutes: mutes
+            mutes: mutes,
+            groupVolumes: groupVolumes
         )
         let groupsChanged = !newHouseholds.elementsEqual(snapshot.households, by: { $0.groups.map(\.id) == $1.groups.map(\.id) })
         snapshot.households = newHouseholds

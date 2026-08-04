@@ -20,6 +20,8 @@ struct Group: Identifiable, Codable, Hashable, Sendable {
     var rooms: [Room]
     /// Playback state is owned by the group and driven by its coordinator.
     var playback: Playback
+    /// Aggregate volume level for the whole group.
+    var volume: Int
 
     init(
         id: String,
@@ -27,7 +29,8 @@ struct Group: Identifiable, Codable, Hashable, Sendable {
         coordinatorID: String,
         householdID: String,
         rooms: [Room] = [],
-        playback: Playback = Playback()
+        playback: Playback = Playback(),
+        volume: Int = 0
     ) {
         self.id = id
         self.name = name
@@ -35,6 +38,7 @@ struct Group: Identifiable, Codable, Hashable, Sendable {
         self.householdID = householdID
         self.rooms = rooms
         self.playback = playback
+        self.volume = volume
     }
 
     var coordinator: Room? {

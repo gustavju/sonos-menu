@@ -87,7 +87,8 @@ struct ContentView: View {
         GroupList(
             groups: viewModel.selectedHousehold?.groups ?? [],
             selectedGroupID: viewModel.selectedGroupID,
-            onSelect: viewModel.selectGroup
+            onSelect: viewModel.selectGroup,
+            onVolumeChange: { volume, _ in viewModel.setGroupVolume(volume) }
         )
     }
 
