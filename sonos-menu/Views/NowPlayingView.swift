@@ -58,33 +58,33 @@ struct NowPlayingView<BottomContent: View>: View {
     
     @ViewBuilder
     private var trackDurationBar: some View {
-        VStack(spacing: 3) {
-            GeometryReader { proxy in
-                let progress = playback.duration > 0
-                    ? playback.relTime / playback.duration
-                    : 0.0
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            VStack(spacing: 3) {
+                GeometryReader { proxy in
+                    let progress = playback.effectiveProgress(now: context.date)
 
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.tertiary)
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(.tertiary)
 
-                    Capsule()
-                        .fill(Color.accentColor)
-                        .frame(width: proxy.size.width * progress)
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(width: proxy.size.width * progress)
+                    }
                 }
+                .frame(height: 3)
+
+                HStack {
+                    Text(playback.liveRelTime(now: context.date).toTrackDisplayString)
+
+                    Spacer()
+
+                    Text(playback.duration.toTrackDisplayString)
+                }
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
             }
-            .frame(height: 3)
-
-            HStack {
-                Text(playback.relTime.toTrackDisplayString)
-
-                Spacer()
-
-                Text(playback.duration.toTrackDisplayString)
-            }
-            .font(.caption2)
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
         }
     }
 

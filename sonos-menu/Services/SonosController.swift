@@ -442,7 +442,8 @@ actor SonosController: SonosControlling {
             artURL: artURL,
             transportState: transportState,
             relTime: relTime,
-            duration: trackDuration
+            duration: trackDuration,
+            fetchedAt: Date()
         )
     }
 }

@@ -29,13 +29,23 @@ struct Playback: Codable, Hashable, Sendable {
     var transportState: TransportState
     
     /// Track time progress
-    /// Future: add fake progress as we only fetch real time pos every 10 secs
     let relTime: TimeInterval
     let duration: TimeInterval
+
+    /// UTC timestamp when this playback snapshot was fetched. Used by the UI to
+    /// add a local elapsed offset between 10-second speaker refreshes.
+    let fetchedAt: Date?
         
-    var progress: Double {
+    func effectiveProgress(now: Date) -> Double {
         guard duration > 0 else { return 0.0 }
-        return relTime / duration
+        let liveRelTime = liveRelTime(now: now)
+        return min(liveRelTime / duration, 1.0)
+    }
+
+    func liveRelTime(now: Date) -> TimeInterval {
+        guard transportState.isPlaying else { return relTime }
+        let offset = fetchedAt.map { now.timeIntervalSince($0) } ?? 0
+        return min(relTime + offset, duration)
     }
 
     /// Future: surface the group's queue and support queue navigation.
@@ -56,7 +66,8 @@ struct Playback: Codable, Hashable, Sendable {
         queuePosition: Int? = nil,
         queueLength: Int? = nil,
         shuffle: ShuffleMode = .off,
-        repeat: RepeatMode = .off
+        repeat: RepeatMode = .off,
+        fetchedAt: Date? = nil
     ) {
         self.title = title
         self.artist = artist
@@ -69,6 +80,7 @@ struct Playback: Codable, Hashable, Sendable {
         self.queueLength = queueLength
         self.shuffle = shuffle
         self.repeat = `repeat`
+        self.fetchedAt = fetchedAt
     }
 
     mutating func setTransportState(_ state: TransportState) {
