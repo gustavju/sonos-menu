@@ -35,6 +35,7 @@ final class SonosRepository {
     private var refreshTask: Task<Void, Never>?
 
     private var isRefreshing = false
+    private var hasCompletedInitialDiscovery = false
 
     /// In-memory cache of latest topology details needed for SOAP command targeting.
     /// Maps group ID to the latest topology and discovered-or-synthesized devices.
@@ -51,7 +52,15 @@ final class SonosRepository {
         self.controller = controller
         discovery.onDiscoveryFinished = { [weak self] in
             Task { @MainActor [weak self] in
-                await self?.refresh()
+                guard let self else { return }
+                print("SSDP discovery finished, discovered \(self.discovery.discoveredDevices.count) devices")
+                // Refresh from discovery before the menu has opened only for the
+                // very first result, so app-launch discovery can populate the UI.
+                // After that, discovery results are only processed while the menu
+                // is open to avoid unnecessary network work in the background.
+                guard self.menuIsOpen || !self.hasCompletedInitialDiscovery else { return }
+                self.hasCompletedInitialDiscovery = true
+                await self.refresh()
             }
         }
 
@@ -99,7 +108,6 @@ final class SonosRepository {
 
     @MainActor
     private func refresh() async {
-        guard menuIsOpen else { return }
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
