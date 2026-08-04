@@ -127,15 +127,25 @@ final class SonosRepository {
         let playbackResponses = await fetchPlayback(for: topology)
 
         var volumes: [String: Int] = [:]
-        let mutes: [String: Bool] = [:]
-        for topologyGroup in topology.groups {
-            for memberID in topologyGroup.memberIDs {
+        volumes = await withTaskGroup(of: (String, Int)?.self) { [weak self] group in
+            guard let self else { return [:] }
+            let memberIDs = topology.groups.flatMap(\.memberIDs)
+            for memberID in Set(memberIDs) {
                 guard let device = deviceStore[memberID] else { continue }
-                if let volume = try? await controller.getVolume(on: device) {
-                    volumes[memberID] = volume
+                group.addTask { [weak self] in
+                    guard let self,
+                        let volume = try? await self.controller.getVolume(on: device) else { return nil }
+                    return (memberID, volume)
                 }
             }
+            var result: [String: Int] = [:]
+            for await value in group {
+                if let (memberID, volume) = value { result[memberID] = volume }
+            }
+            return result
         }
+
+        let mutes: [String: Bool] = [:]
 
         var groupVolumes: [String: Int] = [:]
         groupVolumes = await withTaskGroup(of: (String, Int)?.self) { [weak self] groupTask in
