@@ -51,11 +51,8 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         selectedGroup?.rooms.contains(where: { $0.id == room.id }) ?? false
     }
 
-    init(repository: SonosRepository? = nil) {
-        self.repository = repository ?? SonosRepository(
-            discovery: SSDPDiscoveryService(),
-            controller: SonosController()
-        )
+    init(repository: SonosRepository) {
+        self.repository = repository
         self.repository.delegate = self
     }
 

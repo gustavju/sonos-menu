@@ -52,6 +52,10 @@ final class SonosRepository {
                 await self?.refresh()
             }
         }
+
+        // Start a single SSDP discovery pass as soon as the app launches.
+        // Periodic topology refresh is handled by startRefreshing() while the menu is open.
+        discovery.refresh()
     }
 
     // MARK: - Lifecycle
@@ -62,11 +66,8 @@ final class SonosRepository {
         guard refreshTask == nil else { return }
         menuIsOpen = true
 
-        // Only auto-scan on open when we have no cached devices. Otherwise the user
-        // controls discovery explicitly via scanForDevices().
-        if deviceStore.isEmpty {
-            discovery.refresh()
-        }
+        // Discovery runs once at app launch; here we only start the periodic
+        // topology/playback refresh while the menu is open.
 
         refreshTask = Task { [weak self] in
             guard let self else { return }

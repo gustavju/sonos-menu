@@ -6,8 +6,12 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var viewModel = SonosMenuViewModel()
-    
+    @State private var viewModel: SonosMenuViewModel
+
+    init(repository: SonosRepository) {
+        _viewModel = State(initialValue: SonosMenuViewModel(repository: repository))
+    }
+
     var body: some View {
     
         if viewModel.allHouseholdRooms.isEmpty {
@@ -149,5 +153,8 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(repository: SonosRepository(
+        discovery: SSDPDiscoveryService(),
+        controller: SonosController()
+    ))
 }
