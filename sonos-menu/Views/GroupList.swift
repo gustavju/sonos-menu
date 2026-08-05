@@ -6,10 +6,10 @@
 import SwiftUI
 
 struct GroupList: View {
-    let groups: [Group]
+    let groups: [SonosGroup]
     let selectedGroupID: String?
-    let onSelect: (Group) -> Void
-    let onVolumeChange: (Double, Group) -> Void
+    let onSelect: (SonosGroup) -> Void
+    let onVolumeChange: (Double, SonosGroup) -> Void
     
     private let rowHeight: CGFloat = 34
     private let selectedRowExtraHeight: CGFloat = 34
@@ -56,7 +56,7 @@ struct GroupList: View {
 }
 
 struct GroupRow: View {
-    let group: Group
+    let group: SonosGroup
     let isSelected: Bool
     let onVolumeChange: (Double) -> Void
     let onTap: () -> Void
@@ -96,7 +96,7 @@ struct GroupRow: View {
 #Preview {
     GroupList(
         groups: [
-            Group(
+            SonosGroup(
                 id: "group-1",
                 name: "Living Room + Kitchen",
                 coordinatorID: "room-1",

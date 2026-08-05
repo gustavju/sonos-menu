@@ -11,7 +11,7 @@ import Foundation
 
 struct Household: Identifiable, Codable, Hashable, Sendable {
     let id: String
-    var groups: [Group]
+    var groups: [SonosGroup]
 
     /// All rooms known in this household, regardless of current group membership.
     /// Useful for future grouping/ungrouping and move operations.
@@ -19,7 +19,7 @@ struct Household: Identifiable, Codable, Hashable, Sendable {
 
     init(
         id: String,
-        groups: [Group] = [],
+        groups: [SonosGroup] = [],
         rooms: [Room] = []
     ) {
         self.id = id

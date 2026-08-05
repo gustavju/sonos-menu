@@ -7,13 +7,26 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var viewModel: SonosMenuViewModel
-
-    init(repository: SonosRepository) {
-        _viewModel = State(initialValue: SonosMenuViewModel(repository: repository))
-    }
-
-    var body: some View {
+    @State private var artworkTheme: ArtworkTheme = .default
     
+    private let artworkService = ArtworkService()
+    
+    init(repository: SonosRepository) {
+        _viewModel = State(
+            initialValue: SonosMenuViewModel(repository: repository)
+        )
+    }
+    
+    var body: some View {
+        content
+            .task(id: viewModel.selectedGroupPlayback.artURL) {
+                await loadArtworkTheme()
+            }
+            .onDisappear(perform: viewModel.onMenuDisappear)
+    }
+    
+    @ViewBuilder
+    private var content: some View {
         if viewModel.allHouseholdRooms.isEmpty {
             footerStatus
                 .padding(12)
@@ -24,55 +37,48 @@ struct ContentView: View {
                     selectedHouseholdID: $viewModel.selectedHouseholdID,
                     onSelect: viewModel.selectHousehold
                 )
-
                 headerSection
-
                 Divider()
-
                 groupListSection
-
                 Divider()
-
                 roomListSection
-
-                //if let error = viewModel.lastError {
-                //    ErrorBanner(message: error)
-                //}
-
                 footerStatus
             }
             .padding()
             .frame(width: 320)
+            .background(background)
             .onAppear(perform: viewModel.onMenuAppear)
-            .onDisappear(perform: viewModel.onMenuDisappear)
-            .background {
-                AsyncImage(url: viewModel.selectedGroupPlayback.artURL) { phase in
-                    if case .success(let image) = phase {
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .saturation(1.2)
-                            .blur(radius: 50)
-                            .scaleEffect(1.15) // avoids blurred edges
-                            .overlay(
-                                LinearGradient(
-                                    colors: [
-                                        .black.opacity(0.25),
-                                        .black.opacity(0.55)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                    } else {
-                        Color.clear
-                    }
-                }
-                .clipped()
-            }
         }
     }
-
+    
+    @ViewBuilder
+    private var background: some View {
+        RadialGradient(
+            colors: [
+                artworkTheme.vibrant.opacity(0.75),
+                artworkTheme.background
+            ],
+            center: .topLeading,
+            startRadius: 20,
+            endRadius: 450
+        )
+    }
+    
+    @MainActor
+    private func loadArtworkTheme() async {
+        
+        guard let url = viewModel.selectedGroupPlayback.artURL else {
+            artworkTheme = .default
+            return
+        }
+        
+        let newTheme = await artworkService.theme(artworkURL: url)
+        withAnimation(.easeInOut(duration: 0.8)) {
+            artworkTheme = newTheme
+        }
+    }
+    
+    
     @ViewBuilder
     private var headerSection: some View {
         NowPlayingView(playback: viewModel.selectedGroupPlayback) {
@@ -85,7 +91,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
     }
-
+    
     @ViewBuilder
     private var groupListSection: some View {
         GroupList(
@@ -95,7 +101,7 @@ struct ContentView: View {
             onVolumeChange: { volume, _ in viewModel.setGroupVolume(volume) }
         )
     }
-
+    
     @ViewBuilder
     private var roomListSection: some View {
         RoomList(
@@ -106,7 +112,7 @@ struct ContentView: View {
             onToggleMembership: viewModel.toggleRoomMembership
         )
     }
-
+    
     @ViewBuilder
     private var footerStatus: some View {
         HStack {
@@ -130,9 +136,9 @@ struct ContentView: View {
                 Text("\(viewModel.households.flatMap(\.groups).count) group\(viewModel.households.flatMap(\.groups).count == 1 ? "" : "s")")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-
+                
                 Spacer()
-
+                
                 Button("Scan") {
                     viewModel.scanForDevices()
                 }

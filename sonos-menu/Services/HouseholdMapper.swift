@@ -49,7 +49,7 @@ struct HouseholdMapper {
         }
 
         return householdGroups.map { (householdID, groups) -> Household in
-            let mappedGroups = groups.map { group -> Group in
+            let mappedGroups = groups.map { group -> SonosGroup in
                 let rooms: [Room] = group.memberIDs.compactMap { memberID in
                     guard let device = deviceByID[memberID] else { return nil }
                     let roomName = topology.memberNames[memberID]
@@ -69,7 +69,7 @@ struct HouseholdMapper {
                 }
                 .sorted { $0.name < $1.name }
 
-                return Group(
+                return SonosGroup(
                     id: group.id,
                     name: group.name,
                     coordinatorID: group.coordinatorID,

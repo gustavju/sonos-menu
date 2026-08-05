@@ -1,5 +1,5 @@
 //
-//  Group.swift
+//  SonosGroup.swift
 //  sonos-menu
 //
 //  A Sonos group is the primary playback domain entity. It owns playback state
@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct Group: Identifiable, Codable, Hashable, Sendable {
+struct SonosGroup: Identifiable, Codable, Hashable, Sendable {
     let id: String
     let name: String
     /// Identifier of the coordinator room.

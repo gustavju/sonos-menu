@@ -28,7 +28,7 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         return households.first { $0.id == selectedHouseholdID }
     }
 
-    var selectedGroup: Group? {
+    var selectedGroup: SonosGroup? {
         guard let household = selectedHousehold else { return nil }
         guard let selectedGroupID else {
             return household.groups.first
@@ -84,13 +84,13 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         selectedGroupID = nil
     }
 
-    func selectGroup(_ group: Group?) {
+    func selectGroup(_ group: SonosGroup?) {
         selectedGroupID = group?.id
     }
 
     // MARK: - SonosRepositoryDelegate
 
-    func sonosRepository(_ repository: SonosRepository, didUpdateGroups groups: [Group]) {
+    func sonosRepository(_ repository: SonosRepository, didUpdateGroups groups: [SonosGroup]) {
         guard selectedGroupID == nil else { return }
 
         let playingGroups = groups.filter { $0.playback.transportState.isPlaying }

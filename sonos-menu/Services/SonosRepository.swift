@@ -19,7 +19,7 @@ struct HouseholdSnapshot: Sendable {
 /// the available groups, so the view model can adjust its selection.
 @MainActor
 protocol SonosRepositoryDelegate: AnyObject {
-    func sonosRepository(_ repository: SonosRepository, didUpdateGroups groups: [Group])
+    func sonosRepository(_ repository: SonosRepository, didUpdateGroups groups: [SonosGroup])
 }
 
 @MainActor
@@ -309,7 +309,7 @@ final class SonosRepository {
 
     // MARK: - User actions
 
-    func togglePlayPause(for group: Group) {
+    func togglePlayPause(for group: SonosGroup) {
         Task {
             guard let device = await commandDevice(for: group) else { return }
             let isPlaying = group.playback.transportState.isPlaying
@@ -326,7 +326,7 @@ final class SonosRepository {
         }
     }
 
-    func nextTrack(for group: Group) {
+    func nextTrack(for group: SonosGroup) {
         Task {
             guard let device = await commandDevice(for: group) else { return }
             do {
@@ -338,7 +338,7 @@ final class SonosRepository {
         }
     }
 
-    func previousTrack(for group: Group) {
+    func previousTrack(for group: SonosGroup) {
         Task {
             guard let device = await commandDevice(for: group) else { return }
             do {
@@ -378,7 +378,7 @@ final class SonosRepository {
         }
     }
 
-    func addRoom(_ room: Room, to group: Group) {
+    func addRoom(_ room: Room, to group: SonosGroup) {
         Task {
             guard let memberDevice = deviceStore[room.deviceID],
                   let coordinatorDevice = await coordinatorDevice(for: group) else { return }
@@ -392,7 +392,7 @@ final class SonosRepository {
         }
     }
 
-    func removeRoom(_ room: Room, from group: Group) {
+    func removeRoom(_ room: Room, from group: SonosGroup) {
         Task {
             guard let memberDevice = deviceStore[room.deviceID] else { return }
             do {
@@ -405,7 +405,7 @@ final class SonosRepository {
         }
     }
 
-    func setGroupVolume(_ volume: Int, for group: Group) {
+    func setGroupVolume(_ volume: Int, for group: SonosGroup) {
         Task {
             guard let device = await commandDevice(for: group) else { return }
             do {
@@ -419,7 +419,7 @@ final class SonosRepository {
 
     /// Returns the coordinator device for a group. Used when joining a room,
     /// where the joining speaker's AVTransport URI is set to `x-rincon:<coordinatorID>`.
-    private func coordinatorDevice(for group: Group) async -> Device? {
+    private func coordinatorDevice(for group: SonosGroup) async -> Device? {
         guard let topology = topologyFor(group: group) else { return nil }
         guard let topologyGroup = topology.groups.first(where: { $0.id == group.id }) else { return nil }
 
@@ -439,7 +439,7 @@ final class SonosRepository {
         )
     }
 
-    private func commandDevice(for group: Group) async -> Device? {
+    private func commandDevice(for group: SonosGroup) async -> Device? {
         guard let topology = topologyFor(group: group) else { return nil }
         guard let topologyGroup = topology.groups.first(where: { $0.id == group.id }) else { return nil }
         return bestDevice(
@@ -449,7 +449,7 @@ final class SonosRepository {
         )
     }
 
-    private func topologyFor(group: Group) -> ZoneGroupTopology? {
+    private func topologyFor(group: SonosGroup) -> ZoneGroupTopology? {
         topologyStore.first { $0.value.groups.contains(where: { $0.id == group.id }) }?.value
     }
 }
