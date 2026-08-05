@@ -10,7 +10,10 @@ import Foundation
 
 struct HouseholdSnapshot: Sendable {
     var households: [Household] = []
+    /// True while SSDP discovery is actively scanning.
     var isScanning: Bool = false
+    /// True until the first discovery pass has completed, even before groups are known.
+    var isInitialScanning: Bool = true
     var lastError: String?
     var lastRefresh: Date?
 }
@@ -35,7 +38,11 @@ final class SonosRepository {
     private var refreshTask: Task<Void, Never>?
 
     private var isRefreshing = false
-    private var hasCompletedInitialDiscovery = false
+    private var hasCompletedInitialDiscovery = false {
+        didSet {
+            snapshot.isInitialScanning = !hasCompletedInitialDiscovery
+        }
+    }
 
     /// In-memory cache of latest topology details needed for SOAP command targeting.
     /// Maps group ID to the latest topology and discovered-or-synthesized devices.
@@ -67,6 +74,8 @@ final class SonosRepository {
         // Start a single SSDP discovery pass as soon as the app launches.
         // Periodic topology refresh is handled by startRefreshing() while the menu is open.
         discovery.refresh()
+
+        snapshot.isInitialScanning = true
     }
 
     // MARK: - Lifecycle
@@ -113,6 +122,7 @@ final class SonosRepository {
         defer { isRefreshing = false }
 
         snapshot.isScanning = discovery.isScanning
+        snapshot.isInitialScanning = !hasCompletedInitialDiscovery
 
         let discovered = discovery.discoveredDevices
         if !discovered.isEmpty {

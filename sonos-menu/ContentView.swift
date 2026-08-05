@@ -27,28 +27,37 @@ struct ContentView: View {
     
     @ViewBuilder
     private var content: some View {
-        if viewModel.allHouseholdRooms.isEmpty {
-            footerStatus
-                .padding(12)
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                HouseholdSelector(
-                    households: viewModel.households,
-                    selectedHouseholdID: $viewModel.selectedHouseholdID,
-                    onSelect: viewModel.selectHousehold
-                )
-                headerSection
-                Divider()
-                groupListSection
-                Divider()
-                roomListSection
-                footerStatus
+        
+        ZStack {
+
+            if viewModel.isInitialScanning {
+                DiscoveryLoadingView(status: viewModel.lastError ?? "Looking...")
+                    .frame(width: 320, height: 320)
             }
-            .padding()
-            .frame(width: 320)
-            .background(background)
-            .onAppear(perform: viewModel.onMenuAppear)
+
+            if !viewModel.isInitialScanning {
+                VStack(alignment: .leading, spacing: 12) {
+                    HouseholdSelector(
+                        households: viewModel.households,
+                        selectedHouseholdID: $viewModel.selectedHouseholdID,
+                        onSelect: viewModel.selectHousehold
+                    )
+                    headerSection
+                    Divider()
+                    groupListSection
+                    Divider()
+                    roomListSection
+                    footerStatus
+                }
+                .padding()
+                .frame(width: 320)
+                .background(background)
+                .onAppear(perform: viewModel.onMenuAppear)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+            
         }
+        .animation(.easeInOut(duration: 0.35), value: viewModel.isInitialScanning)
     }
     
     @ViewBuilder
