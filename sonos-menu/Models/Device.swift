@@ -50,7 +50,7 @@ struct Device: Identifiable, Codable, Hashable, Sendable {
     }
 
     /// Creates a minimal device from topology data when discovery hasn't matched the host yet.
-    static func topologyHost(id: String, host: String) -> Device {
+    nonisolated static func topologyHost(id: String, host: String) -> Device {
         Device(
             id: id,
             name: id,

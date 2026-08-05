@@ -7,13 +7,12 @@
 //
 
 import Foundation
+import Combine
 
 struct HouseholdSnapshot: Sendable {
     var households: [Household] = []
     /// True while SSDP discovery is actively scanning.
     var isScanning: Bool = false
-    /// True until the first discovery pass has completed, even before groups are known.
-    var isInitialScanning: Bool = true
     var lastError: String?
     var lastRefresh: Date?
 }
@@ -25,6 +24,79 @@ protocol SonosRepositoryDelegate: AnyObject {
     func sonosRepository(_ repository: SonosRepository, didUpdateGroups groups: [SonosGroup])
 }
 
+/// Internal actor that holds the mutable caches used during refresh.
+/// Keeping these off the main actor lets `refresh()` perform network work
+/// without holding the UI thread.
+private actor RefreshStore {
+    /// Maps a stable topology key to the latest parsed topology.
+    private var topologyStore: [String: ZoneGroupTopology] = [:]
+    /// Maps device ID to the latest known or synthesized device.
+    private var deviceStore: [String: Device] = [:]
+
+    func merge(_ devices: [Device]) {
+        for device in devices {
+            deviceStore[device.id] = device
+        }
+    }
+
+    func allDevices() -> [Device] { Array(deviceStore.values) }
+
+    func device(for id: String) -> Device? { deviceStore[id] }
+
+    func synthesize(from topology: ZoneGroupTopology) {
+        for (memberID, host) in topology.memberLocations where deviceStore[memberID] == nil {
+            deviceStore[memberID] = .topologyHost(id: memberID, host: host)
+        }
+    }
+
+    func store(_ topology: ZoneGroupTopology) {
+        if !topology.groups.isEmpty {
+            let key = topology.groups.map(\.id).sorted().joined(separator: "-")
+            topologyStore[key] = topology
+        }
+    }
+
+    func topology(containingGroupID groupID: String) -> ZoneGroupTopology? {
+        topologyStore.first { $0.value.groups.contains(where: { $0.id == groupID }) }?.value
+    }
+
+    /// Coordinator ID first, then any member ID with a known host.
+    func bestDevice(for group: TopologyGroup, locations: [String: String]) -> Device? {
+        if let coordinatorHost = locations[group.coordinatorID] {
+            return deviceStore[group.coordinatorID]
+                ?? .topologyHost(id: group.coordinatorID, host: coordinatorHost)
+        }
+
+        for memberID in group.memberIDs {
+            guard let host = locations[memberID] else { continue }
+            return deviceStore[memberID] ?? .topologyHost(id: memberID, host: host)
+        }
+
+        return deviceStore.values
+            .filter { group.memberIDs.contains($0.id) }
+            .sorted { ($0.id == group.coordinatorID) ? true : ($1.id != group.coordinatorID) }
+            .first
+    }
+
+    func coordinatorDevice(forGroupID groupID: String) -> Device? {
+        guard let topology = topology(containingGroupID: groupID) else { return nil }
+        guard let topologyGroup = topology.groups.first(where: { $0.id == groupID }) else { return nil }
+
+        let coordinatorID = topologyGroup.coordinatorID
+        if let cached = deviceStore[coordinatorID] { return cached }
+        if let host = topology.memberLocations[coordinatorID] {
+            return .topologyHost(id: coordinatorID, host: host)
+        }
+        return bestDevice(for: topologyGroup, locations: topology.memberLocations)
+    }
+
+    func commandDevice(forGroupID groupID: String) -> Device? {
+        guard let topology = topology(containingGroupID: groupID) else { return nil }
+        guard let topologyGroup = topology.groups.first(where: { $0.id == groupID }) else { return nil }
+        return bestDevice(for: topologyGroup, locations: topology.memberLocations)
+    }
+}
+
 @MainActor
 @Observable
 final class SonosRepository {
@@ -33,49 +105,36 @@ final class SonosRepository {
 
     /// External infrastructure. Override for tests by passing concrete instances.
     private let discovery: SSDPDiscoveryService
-    private let controller: any SonosControlling
+    private nonisolated let controller: any SonosControlling
+    private nonisolated let store = RefreshStore()
 
     private var refreshTask: Task<Void, Never>?
+    private var discoveryObservationTask: Task<Void, Never>?
 
     private var isRefreshing = false
-    private var hasCompletedInitialDiscovery = false {
-        didSet {
-            snapshot.isInitialScanning = !hasCompletedInitialDiscovery
-        }
-    }
-
-    /// In-memory cache of latest topology details needed for SOAP command targeting.
-    /// Maps group ID to the latest topology and discovered-or-synthesized devices.
-    private var topologyStore: [String: ZoneGroupTopology] = [:]
-    private var deviceStore: [String: Device] = [:]
-
-    var devices: [Device] { Array(deviceStore.values) }
-
+    private var hasReceivedDiscoveryResult = false
+    /// Set by `discoveryFinished()` when a result arrives while a refresh is
+    /// already in progress, so the repository immediately retries afterwards
+    /// with the newly discovered devices.
+    private var pendingDiscoveryRefresh = false
+    private var hasCompletedInitialDiscovery = false
+    
     init(
         discovery: SSDPDiscoveryService,
         controller: any SonosControlling
     ) {
         self.discovery = discovery
         self.controller = controller
-        discovery.onDiscoveryFinished = { [weak self] in
-            Task { @MainActor [weak self] in
+
+        discoveryObservationTask = Task { [weak self] in
+            // `discovery.$devices` publishes on the main actor because `devices`
+            // is `@Published` on a `@MainActor` service. We simply react by
+            // scheduling a background refresh; the heavy work never runs here.
+            for await _ in discovery.$devices.values {
                 guard let self else { return }
-                print("SSDP discovery finished, discovered \(self.discovery.discoveredDevices.count) devices")
-                // Refresh from discovery before the menu has opened only for the
-                // very first result, so app-launch discovery can populate the UI.
-                // After that, discovery results are only processed while the menu
-                // is open to avoid unnecessary network work in the background.
-                guard self.menuIsOpen || !self.hasCompletedInitialDiscovery else { return }
-                self.hasCompletedInitialDiscovery = true
-                await self.refresh()
+                await self.discoveryFinished()
             }
         }
-
-        // Start a single SSDP discovery pass as soon as the app launches.
-        // Periodic topology refresh is handled by startRefreshing() while the menu is open.
-        discovery.refresh()
-
-        snapshot.isInitialScanning = true
     }
 
     // MARK: - Lifecycle
@@ -85,9 +144,6 @@ final class SonosRepository {
     func startRefreshing() {
         guard refreshTask == nil else { return }
         menuIsOpen = true
-
-        // Discovery runs once at app launch; here we only start the periodic
-        // topology/playback refresh while the menu is open.
 
         refreshTask = Task { [weak self] in
             guard let self else { return }
@@ -113,115 +169,115 @@ final class SonosRepository {
         discovery.refresh()
     }
 
-    // MARK: - Sync
+    // MARK: - Discovery-to-refresh
 
-    @MainActor
-    private func refresh() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-
+    private func discoveryFinished() async {
+        print("SSDP discovery finished, discovered \(discovery.discoveredDevices.count) devices")
         snapshot.isScanning = discovery.isScanning
-        snapshot.isInitialScanning = !hasCompletedInitialDiscovery
 
-        let discovered = discovery.discoveredDevices
-        if !discovered.isEmpty {
-            mergeDiscoveredDevices(discovered)
-        }
+        guard !hasCompletedInitialDiscovery else { return }
 
-        // Try to fetch topology from any command target if we already know groups, or from any device.
-        let topology: ZoneGroupTopology
-        do {
-            topology = try await fetchLatestTopology()
-        } catch {
-            snapshot.lastError = error.localizedDescription
-            return
-        }
+        hasReceivedDiscoveryResult = true
 
-        if !topology.groups.isEmpty {
-            topologyStore[topology.groups.map { $0.id }.sorted().joined(separator: "-")] = topology
-        }
-
-        // Ensure every topology member has a Device entry so setVolume/getVolume can target it.
-        synthesizeDevices(from: topology)
-
-        // Default playback fetch only for now; later we may fetch per-group concurrently.
-        let playbackResponses = await fetchPlayback(for: topology)
-
-        var volumes: [String: Int] = [:]
-        volumes = await withTaskGroup(of: (String, Int)?.self) { [weak self] group in
-            guard let self else { return [:] }
-            let memberIDs = topology.groups.flatMap(\.memberIDs)
-            for memberID in Set(memberIDs) {
-                guard let device = deviceStore[memberID] else { continue }
-                group.addTask { [weak self] in
-                    guard let self,
-                        let volume = try? await self.controller.getVolume(on: device) else { return nil }
-                    return (memberID, volume)
-                }
-            }
-            var result: [String: Int] = [:]
-            for await value in group {
-                if let (memberID, volume) = value { result[memberID] = volume }
-            }
-            return result
-        }
-
-        let mutes: [String: Bool] = [:]
-
-        var groupVolumes: [String: Int] = [:]
-        groupVolumes = await withTaskGroup(of: (String, Int)?.self) { [weak self] groupTask in
-            guard let self else { return [:] }
-            for topologyGroup in topology.groups {
-                groupTask.addTask { [weak self] in
-                    guard let self else { return nil }
-                    let device = await self.bestDevice(
-                        for: topologyGroup,
-                        devices: self.deviceStore,
-                        locations: topology.memberLocations
-                    )
-                    guard let device else { return nil }
-                    do {
-                        let volume = try await self.controller.getGroupVolume(on: device, groupID: topologyGroup.id)
-                        return (topologyGroup.id, volume)
-                    } catch {
-                        return nil
-                    }
-                }
-            }
-            var result: [String: Int] = [:]
-            for await value in groupTask {
-                if let (groupID, volume) = value {
-                    result[groupID] = volume
-                }
-            }
-            return result
-        }
-
-        let newHouseholds = HouseholdMapper.map(
-            topology: topology,
-            devices: Array(deviceStore.values),
-            playbackResponses: playbackResponses,
-            volumes: volumes,
-            mutes: mutes,
-            groupVolumes: groupVolumes
-        )
-        let groupsChanged = !newHouseholds.elementsEqual(snapshot.households, by: { $0.groups.map(\.id) == $1.groups.map(\.id) })
-        snapshot.households = newHouseholds
-        snapshot.lastRefresh = Date()
-
-        if groupsChanged {
-            let allGroups = newHouseholds.flatMap(\.groups)
-            delegate?.sonosRepository(self, didUpdateGroups: allGroups)
+        if isRefreshing {
+            pendingDiscoveryRefresh = true
+        } else {
+            await refresh()
         }
     }
 
-    @MainActor
-    private func fetchLatestTopology() async throws -> ZoneGroupTopology {
-        // Prefer a known coordinator from a previously selected group or any discovered device.
-        for (_, topology) in topologyStore {
+    // MARK: - Sync
+
+    /// Schedules a complete refresh. All network work is performed off the main
+    /// actor; only the final `snapshot` update publishes back here.
+    func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+
+        snapshot.isScanning = discovery.isScanning
+        let discovered = discovery.discoveredDevices
+
+        // Detach to the cooperative pool/background so the main actor isn't held
+        // during topology, playback, and volume fetches.
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let (newHouseholds, error) = await self.performBackgroundRefresh(discovered: discovered)
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+
+                if let error {
+                    self.snapshot.lastError = error
+                } else {
+                    self.snapshot.lastError = nil
+                }
+
+                if !newHouseholds.isEmpty {
+                    let groupsChanged = !newHouseholds.elementsEqual(
+                        self.snapshot.households,
+                        by: { $0.groups.map(\.id) == $1.groups.map(\.id) }
+                    )
+                    self.snapshot.households = newHouseholds
+
+                    if groupsChanged {
+                        let allGroups = newHouseholds.flatMap(\.groups)
+                        self.delegate?.sonosRepository(self, didUpdateGroups: allGroups)
+                    }
+                }
+
+                if self.hasReceivedDiscoveryResult {
+                    self.hasCompletedInitialDiscovery = true
+                }
+                self.snapshot.lastRefresh = Date()
+                self.isRefreshing = false
+                self.snapshot.isScanning = self.discovery.isScanning
+
+                if self.pendingDiscoveryRefresh {
+                    self.pendingDiscoveryRefresh = false
+                    Task { await self.refresh() }
+                }
+            }
+        }
+    }
+
+    nonisolated private func performBackgroundRefresh(
+        discovered: [Device]
+    ) async -> (households: [Household], error: String?) {
+        await store.merge(discovered)
+
+        let topology: ZoneGroupTopology
+        do {
+            topology = try await fetchLatestTopology(discovered: discovered)
+        } catch {
+            return ([], error.localizedDescription)
+        }
+
+        await store.store(topology)
+        await store.synthesize(from: topology)
+
+        async let playbackResponses = fetchPlayback(for: topology)
+        async let volumes = fetchVolumes(for: topology)
+        async let groupVolumes = fetchGroupVolumes(for: topology)
+
+        let households = HouseholdMapper.map(
+            topology: topology,
+            devices: await store.allDevices(),
+            playbackResponses: await playbackResponses,
+            volumes: await volumes,
+            mutes: [:],
+            groupVolumes: await groupVolumes
+        )
+
+        return (households, nil)
+    }
+
+    nonisolated private func fetchLatestTopology(
+        discovered: [Device]
+    ) async throws -> ZoneGroupTopology {
+        // Prefer cached topologies first.
+        for topology in await storeAllTopologies() {
             for group in topology.groups {
-                if let device = bestDevice(for: group, devices: deviceStore, locations: topology.memberLocations) {
+                if let device = await store.bestDevice(for: group, locations: topology.memberLocations) {
                     if let fresh = try? await controller.fetchTopology(from: device) {
                         return fresh
                     }
@@ -229,16 +285,17 @@ final class SonosRepository {
             }
         }
 
-        for device in deviceStore.values {
+        // Then any known device.
+        for device in await store.allDevices() {
             if let fresh = try? await controller.fetchTopology(from: device) {
                 return fresh
             }
         }
 
-        // Fallback to any newly discovered device, even before it has been merged into stores.
-        for device in discovery.discoveredDevices {
+        // Fallback to a freshly discovered device.
+        for device in discovered {
             if let fresh = try? await controller.fetchTopology(from: device) {
-                mergeDiscoveredDevices([device])
+                await store.merge([device])
                 return fresh
             }
         }
@@ -246,18 +303,19 @@ final class SonosRepository {
         throw SonosError.badResponse
     }
 
-    private func fetchPlayback(for topology: ZoneGroupTopology) async -> [String: Playback] {
-        var results: [String: Playback] = [:]
+    nonisolated private func storeAllTopologies() async -> [ZoneGroupTopology] {
+        await store.allTopologies()
+    }
+
+    nonisolated private func fetchPlayback(for topology: ZoneGroupTopology) async -> [String: Playback] {
         await withTaskGroup(of: (String, Playback)?.self) { group in
             for topologyGroup in topology.groups {
                 group.addTask { [weak self] in
-                    guard let self else { return nil }
-                    let device = await self.bestDevice(
-                        for: topologyGroup,
-                        devices: self.deviceStore,
-                        locations: topology.memberLocations
-                    )
-                    guard let device else { return nil }
+                    guard let self,
+                          let device = await self.store.bestDevice(
+                              for: topologyGroup,
+                              locations: topology.memberLocations
+                          ) else { return nil }
                     do {
                         let playback = try await self.controller.fetchNowPlaying(on: device)
                         return (topologyGroup.id, playback)
@@ -267,108 +325,126 @@ final class SonosRepository {
                 }
             }
 
+            var results: [String: Playback] = [:]
             for await result in group {
                 if let (groupID, playback) = result {
                     results[groupID] = playback
                 }
             }
-        }
-        return results
-    }
-
-    @MainActor
-    private func mergeDiscoveredDevices(_ discovered: [Device]) {
-        for device in discovered {
-            deviceStore[device.id] = device
+            return results
         }
     }
 
-    @MainActor
-    private func synthesizeDevices(from topology: ZoneGroupTopology) {
-        for (memberID, host) in topology.memberLocations {
-            guard deviceStore[memberID] == nil else { continue }
-            deviceStore[memberID] = Device.topologyHost(id: memberID, host: host)
+    nonisolated private func fetchVolumes(for topology: ZoneGroupTopology) async -> [String: Int] {
+        await withTaskGroup(of: (String, Int)?.self) { group in
+            let memberIDs = Set(topology.groups.flatMap(\.memberIDs))
+            for memberID in memberIDs {
+                guard let device = await self.store.device(for: memberID) else { continue }
+                group.addTask { [weak self] in
+                    guard let self else { return nil }
+                    guard let volume = try? await self.controller.getVolume(on: device) else { return nil }
+                    return (memberID, volume)
+                }
+            }
+
+            var results: [String: Int] = [:]
+            for await result in group {
+                if let (memberID, volume) = result { results[memberID] = volume }
+            }
+            return results
         }
     }
 
-    // MARK: - Command targeting
+    nonisolated private func fetchGroupVolumes(for topology: ZoneGroupTopology) async -> [String: Int] {
+        await withTaskGroup(of: (String, Int)?.self) { group in
+            for topologyGroup in topology.groups {
+                group.addTask { [weak self] in
+                    guard let self,
+                          let device = await self.store.bestDevice(
+                              for: topologyGroup,
+                              locations: topology.memberLocations
+                          ) else { return nil }
+                    do {
+                        let volume = try await self.controller.getGroupVolume(on: device, groupID: topologyGroup.id)
+                        return (topologyGroup.id, volume)
+                    } catch {
+                        return nil
+                    }
+                }
+            }
 
-    /// The coordinator is the canonical target. If no coordinator device is known,
-    /// fall back to any known group member.
-    private func bestDevice(
-        for topologyGroup: TopologyGroup,
-        devices: [String: Device],
-        locations: [String: String]
-    ) -> Device? {
-        if let coordinatorHost = locations[topologyGroup.coordinatorID] {
-            return devices[topologyGroup.coordinatorID]
-                ?? Device.topologyHost(id: topologyGroup.coordinatorID, host: coordinatorHost)
+            var results: [String: Int] = [:]
+            for await result in group {
+                if let (groupID, volume) = result { results[groupID] = volume }
+            }
+            return results
         }
-
-        for memberID in topologyGroup.memberIDs {
-            guard let host = locations[memberID] else { continue }
-            return devices[memberID] ?? Device.topologyHost(id: memberID, host: host)
-        }
-
-        // Last resort: any discovered device in the same group, sorted coordinator first.
-        return devices.values
-            .filter { topologyGroup.memberIDs.contains($0.id) }
-            .sorted { ($0.id == topologyGroup.coordinatorID) ? true : ($1.id != topologyGroup.coordinatorID) }
-            .first
     }
 
     // MARK: - User actions
 
     func togglePlayPause(for group: SonosGroup) {
-        Task {
-            guard let device = await commandDevice(for: group) else { return }
-            let isPlaying = group.playback.transportState.isPlaying
+        let isPlaying = group.playback.transportState.isPlaying
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.commandDevice(forGroupID: group.id) else { return }
             do {
                 if isPlaying {
-                    try await controller.pause(on: device)
+                    try await self.controller.pause(on: device)
                 } else {
-                    try await controller.play(on: device)
+                    try await self.controller.play(on: device)
                 }
-                await refresh()
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
 
     func nextTrack(for group: SonosGroup) {
-        Task {
-            guard let device = await commandDevice(for: group) else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.commandDevice(forGroupID: group.id) else { return }
             do {
-                try await controller.nextTrack(on: device)
-                await refresh()
+                try await self.controller.nextTrack(on: device)
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
 
     func previousTrack(for group: SonosGroup) {
-        Task {
-            guard let device = await commandDevice(for: group) else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.commandDevice(forGroupID: group.id) else { return }
             do {
-                try await controller.previousTrack(on: device)
-                await refresh()
+                try await self.controller.previousTrack(on: device)
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
 
     /// room.volume is updated optimistically by the caller before this method runs.
     func setVolume(_ volume: Int, for room: Room) {
-        Task {
-            guard let device = deviceStore[room.deviceID] else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.device(for: room.deviceID) else { return }
             do {
-                try await controller.setVolume(volume, on: device)
-                await refresh()
+                try await self.controller.setVolume(volume, on: device)
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
@@ -377,89 +453,71 @@ final class SonosRepository {
         // Sonos doesn't expose a simple SetMute on a RenderingControl instance for the master
         // channel in the same straightforward way as SetVolume across all devices. We model it
         // as volume 0 / restore for now until a dedicated SetMute implementation is added.
-        Task {
-            guard let device = deviceStore[room.deviceID] else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.device(for: room.deviceID) else { return }
             do {
-                try await controller.setVolume(muted ? 0 : max(room.volume, 10), on: device)
-                await refresh()
+                try await self.controller.setVolume(muted ? 0 : max(room.volume, 10), on: device)
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
 
     func addRoom(_ room: Room, to group: SonosGroup) {
-        Task {
-            guard let memberDevice = deviceStore[room.deviceID],
-                  let coordinatorDevice = await coordinatorDevice(for: group) else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let memberDevice = await self.store.device(for: room.deviceID),
+                  let coordinatorDevice = await self.store.coordinatorDevice(forGroupID: group.id) else { return }
             do {
-                try await controller.joinGroup(member: memberDevice, coordinatorID: coordinatorDevice.id)
+                try await self.controller.joinGroup(member: memberDevice, coordinatorID: coordinatorDevice.id)
                 try? await Task.sleep(for: .milliseconds(750))
-                await refresh()
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
 
     func removeRoom(_ room: Room, from group: SonosGroup) {
-        Task {
-            guard let memberDevice = deviceStore[room.deviceID] else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let memberDevice = await self.store.device(for: room.deviceID) else { return }
             do {
-                try await controller.leaveGroup(member: memberDevice)
+                try await self.controller.leaveGroup(member: memberDevice)
                 try? await Task.sleep(for: .milliseconds(750))
-                await refresh()
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
 
     func setGroupVolume(_ volume: Int, for group: SonosGroup) {
-        Task {
-            guard let device = await commandDevice(for: group) else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.commandDevice(forGroupID: group.id) else { return }
             do {
-                try await controller.setGroupVolume(volume, on: device, groupID: group.id)
-                await refresh()
+                try await self.controller.setGroupVolume(volume, on: device, groupID: group.id)
+                await self.refresh()
             } catch {
-                snapshot.lastError = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
             }
         }
     }
+}
 
-    /// Returns the coordinator device for a group. Used when joining a room,
-    /// where the joining speaker's AVTransport URI is set to `x-rincon:<coordinatorID>`.
-    private func coordinatorDevice(for group: SonosGroup) async -> Device? {
-        guard let topology = topologyFor(group: group) else { return nil }
-        guard let topologyGroup = topology.groups.first(where: { $0.id == group.id }) else { return nil }
-
-        let coordinatorID = topologyGroup.coordinatorID
-        if let cached = deviceStore[coordinatorID] {
-            return cached
-        }
-
-        if let host = topology.memberLocations[coordinatorID] {
-            return Device.topologyHost(id: coordinatorID, host: host)
-        }
-
-        return bestDevice(
-            for: topologyGroup,
-            devices: deviceStore,
-            locations: topology.memberLocations
-        )
-    }
-
-    private func commandDevice(for group: SonosGroup) async -> Device? {
-        guard let topology = topologyFor(group: group) else { return nil }
-        guard let topologyGroup = topology.groups.first(where: { $0.id == group.id }) else { return nil }
-        return bestDevice(
-            for: topologyGroup,
-            devices: deviceStore,
-            locations: topology.memberLocations
-        )
-    }
-
-    private func topologyFor(group: SonosGroup) -> ZoneGroupTopology? {
-        topologyStore.first { $0.value.groups.contains(where: { $0.id == group.id }) }?.value
+private extension RefreshStore {
+    func allTopologies() -> [ZoneGroupTopology] {
+        Array(topologyStore.values)
     }
 }

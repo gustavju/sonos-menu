@@ -13,7 +13,7 @@ enum HouseholdMapError: Error {
     case missingHouseholdID
 }
 
-struct HouseholdMapper {
+enum HouseholdMapper {
     /// Build the domain snapshot from the latest gathered data.
     /// - Parameters:
     ///   - topology: raw group topology parsed from a coordinator.
@@ -21,7 +21,7 @@ struct HouseholdMapper {
     ///   - playbackResponses: fetched playback keyed by group ID.
     ///   - volumes: room volume keyed by room/device ID.
     ///   - mutes: room mute keyed by room/device ID.
-    static func map(
+    nonisolated static func map(
         topology: ZoneGroupTopology,
         devices: [Device],
         playbackResponses: [String: Playback] = [:],
@@ -92,7 +92,7 @@ struct HouseholdMapper {
         .sorted { $0.id < $1.id }
     }
 
-    private static func householdID(
+    nonisolated private static func householdID(
         for group: TopologyGroup,
         devices: [String: Device]
     ) -> String? {
@@ -106,7 +106,7 @@ struct HouseholdMapper {
 
     /// Best-effort extraction of a human room name from the Sonos `friendlyName`.
     /// Returns `nil` when the string looks technical so callers can fall back.
-    private static func parseRoomName(from friendlyName: String) -> String? {
+    nonisolated private static func parseRoomName(from friendlyName: String) -> String? {
         let withoutIP = friendlyName.replacingOccurrences(
             of: #"^\d+\.\d+\.\d+\.\d+\s*-\s*"#,
             with: "",

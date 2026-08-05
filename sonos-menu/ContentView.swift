@@ -22,6 +22,7 @@ struct ContentView: View {
             .task(id: viewModel.selectedGroupPlayback.artURL) {
                 await loadArtworkTheme()
             }
+            .onAppear(perform: viewModel.onMenuAppear)
             .onDisappear(perform: viewModel.onMenuDisappear)
     }
     
@@ -30,12 +31,12 @@ struct ContentView: View {
         
         ZStack {
 
-            if viewModel.isInitialScanning {
-                DiscoveryLoadingView(status: viewModel.lastError ?? "Looking...")
+            if viewModel.allHouseholdRooms.isEmpty {
+                DiscoveryLoadingView(status: "Checking between the cushions...")
                     .frame(width: 320, height: 320)
             }
 
-            if !viewModel.isInitialScanning {
+            if !viewModel.allHouseholdRooms.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     HouseholdSelector(
                         households: viewModel.households,
@@ -52,12 +53,11 @@ struct ContentView: View {
                 .padding()
                 .frame(width: 320)
                 .background(background)
-                .onAppear(perform: viewModel.onMenuAppear)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
             
         }
-        .animation(.easeInOut(duration: 0.35), value: viewModel.isInitialScanning)
+        .animation(.easeInOut(duration: 0.35), value: viewModel.allHouseholdRooms.isEmpty)
     }
     
     @ViewBuilder

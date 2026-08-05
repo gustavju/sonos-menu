@@ -7,24 +7,37 @@ import Foundation
 import Combine
 import Darwin.C
 
+/// Discovers Sonos players on the local network using SSDP.
+///
+/// Discovery runs fully off the main actor: socket I/O is non-blocking and the
+/// task yields between UDP polls so it never monopolizes the cooperative pool.
+/// Device description fetches are parallelized so the first responsive speaker
+/// is reported quickly instead of waiting for serial round-trips.
+@MainActor
 final class SSDPDiscoveryService: ObservableObject {
     @Published private(set) var devices: [Device] = []
     @Published private(set) var isScanning = false
     @Published private(set) var lastError: String?
 
-    /// Called on the MainActor when a discovery pass finishes, regardless of success.
-    var onDiscoveryFinished: (@MainActor () -> Void)?
-
     private let ssdpMulticastHost = "239.255.255.250"
     private let ssdpMulticastPort: UInt16 = 1900
     private let searchTarget = "urn:schemas-upnp-org:device:ZonePlayer:1"
     private let socketTimeout: TimeInterval = 5
-    private let session = URLSession.shared
+    private let receivePollingInterval: TimeInterval = 0.1
+    private let descriptionTimeout: TimeInterval = 5
+    private let session: URLSession
 
     private var discoveryTask: Task<Void, Never>?
     private var refreshTimer: Timer?
 
     var discoveredDevices: [Device] { devices }
+
+    init() {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = descriptionTimeout
+        configuration.timeoutIntervalForResource = descriptionTimeout
+        self.session = URLSession(configuration: configuration)
+    }
 
     /// Runs a single SSDP discovery pass. Call again only when the user explicitly refreshes.
     func startContinuousDiscovery(interval: TimeInterval = 15) {
@@ -49,19 +62,18 @@ final class SSDPDiscoveryService: ObservableObject {
         lastError = nil
 
         let existing = devices
-        discoveryTask = Task { [weak self] in
+
+        discoveryTask = Task.detached(priority: .utility) { [weak self] in
             do {
                 let found = try await self?.discover() ?? []
                 await MainActor.run { [weak self] in
                     self?.devices = found.isEmpty ? existing : found
                     self?.isScanning = false
-                    self?.onDiscoveryFinished?()
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     self?.lastError = error.localizedDescription
                     self?.isScanning = false
-                    self?.onDiscoveryFinished?()
                 }
             }
         }
@@ -86,6 +98,10 @@ final class SSDPDiscoveryService: ObservableObject {
             throw DiscoveryError.socketFailed(errno: errno)
         }
         defer { close(socketFD) }
+
+        // Non-blocking mode lets us poll without blocking the executor thread.
+        let flags = fcntl(socketFD, F_GETFL, 0)
+        _ = fcntl(socketFD, F_SETFL, flags | O_NONBLOCK)
 
         var reuse = Int32(1)
         setsockopt(socketFD, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
@@ -121,57 +137,57 @@ final class SSDPDiscoveryService: ObservableObject {
             throw DiscoveryError.sendFailed(errno: errno)
         }
 
-        var results: [String: Device] = [:]
         let deadline = Date().addingTimeInterval(socketTimeout)
-
         var discoveredHosts = Set<String>()
 
+        // Collect SSDP responses without blocking for the full timeout.
         while Date() < deadline && !Task.isCancelled {
-            let content = try await receiveUDP(socket: socketFD, timeout: 1.0)
-            guard let content else { continue }
-            guard let text = String(data: content, encoding: .utf8) else { continue }
-
-            guard let location = extractLocation(from: text),
-                  let host = speakerHost(from: location),
-                  !discoveredHosts.contains(host) else {
-                continue
+            if let content = try await receiveNonBlockingUDP(socket: socketFD) {
+                if let text = String(data: content, encoding: .utf8),
+                   let location = extractLocation(from: text),
+                   let host = speakerHost(from: location),
+                   !discoveredHosts.contains(host) {
+                    discoveredHosts.insert(host)
+                }
             }
-            discoveredHosts.insert(host)
-
-            guard let speaker = try? await fetchDescription(host: host) else {
-                continue
-            }
-            results[speaker.host] = speaker
+            try? await Task.sleep(for: .seconds(receivePollingInterval))
         }
 
-        return Array(results.values)
+        // Fetch descriptions in parallel so the first speaker is reported quickly.
+        return await withTaskGroup(of: Device?.self) { group in
+            for host in discoveredHosts {
+                group.addTask { [weak self] in
+                    guard let self else { return nil }
+                    return try? await self.fetchDescription(host: host)
+                }
+            }
+
+            var results: [String: Device] = [:]
+            for await speaker in group {
+                if let speaker {
+                    results[speaker.host] = speaker
+                }
+            }
+            return Array(results.values)
+        }
     }
 
-    private func receiveUDP(socket: Int32, timeout: TimeInterval) async throws -> Data? {
+    private func receiveNonBlockingUDP(socket: Int32) async throws -> Data? {
         var buffer = [UInt8](repeating: 0, count: 2048)
-        var readFDs = fd_set()
-        memset(&readFDs, 0, MemoryLayout<fd_set>.size)
-
-        let fdBits = Int32(MemoryLayout<Int32>.size * 8)
-        let index = Int(socket) / Int(fdBits)
-        let bit = Int(socket) % Int(fdBits)
-        let mask = Int32(bitPattern: 1 << UInt(bit))
-        withUnsafeMutablePointer(to: &readFDs) { pointer in
-            pointer.withMemoryRebound(to: Int32.self, capacity: MemoryLayout<fd_set>.size / MemoryLayout<Int32>.size) { bits in
-                bits[index] |= mask
-            }
-        }
-
-        var tv = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - floor(timeout)) * 1_000_000))
-        let ready = select(socket + 1, &readFDs, nil, nil, &tv)
-        guard ready > 0 else { return nil }
 
         let received = buffer.withUnsafeMutableBytes { rawBuffer -> ssize_t in
             recv(socket, rawBuffer.baseAddress, rawBuffer.count, 0)
         }
-        guard received > 0 else { return nil }
 
-        return Data(buffer.prefix(Int(received)))
+        if received > 0 {
+            return Data(buffer.prefix(Int(received)))
+        } else if received < 0 && errno == EAGAIN {
+            return nil
+        } else if received < 0 {
+            throw DiscoveryError.socketFailed(errno: errno)
+        } else {
+            return nil
+        }
     }
 
     private func extractLocation(from response: String) -> String? {

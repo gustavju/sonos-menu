@@ -16,7 +16,6 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
 
     var households: [Household] { repository.snapshot.households }
     var isScanning: Bool { repository.snapshot.isScanning }
-    var isInitialScanning: Bool { repository.snapshot.isInitialScanning }
     var lastError: String? { repository.snapshot.lastError }
 
     var selectedHouseholdID: String?
@@ -62,6 +61,9 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
 
     func onMenuAppear() {
         repository.startRefreshing()
+        if self.allHouseholdRooms.isEmpty {
+            repository.scanForDevices()
+        }
     }
 
     func onMenuDisappear() {

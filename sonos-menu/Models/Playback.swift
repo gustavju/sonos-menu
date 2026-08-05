@@ -16,7 +16,7 @@ struct Playback: Codable, Hashable, Sendable {
         case transitioning = "TRANSITIONING"
         case unknown = "UNKNOWN"
 
-        var isPlaying: Bool {
+        nonisolated var isPlaying: Bool {
             self == .playing || self == .transitioning
         }
     }
@@ -90,7 +90,7 @@ struct Playback: Codable, Hashable, Sendable {
 }
 
 extension TimeInterval {
-    static func fromSonosTimeString(_ timeString: String) -> TimeInterval {
+    static nonisolated func fromSonosTimeString(_ timeString: String) -> TimeInterval {
         let components = timeString.split(separator: ":").compactMap { Double($0) }
         
         switch components.count {
