@@ -188,7 +188,7 @@ actor SonosController: SonosControlling {
         
         
         
-        let items = parseDIDLItems(response.resultXML)
+        let items = parseDIDLItems(response.resultXML, device: device)
         
         
         return items
@@ -392,7 +392,7 @@ actor SonosController: SonosControlling {
         return BrowseResult(resultXML: resultXML, numberReturned: numberReturned, totalMatches: totalMatches, updateID: updateID)
     }
     
-    private func parseDIDLItems(_ resultXML: String) -> [DIDLItem] {
+    private func parseDIDLItems(_ resultXML: String, device: Device) -> [DIDLItem] {
         guard let data = resultXML.data(using: .utf8),
               let xml = try? XMLDocument(data: data, options: []),
               let root = xml.rootElement() else {
@@ -406,10 +406,14 @@ actor SonosController: SonosControlling {
             guard let id = item.attribute(forName: "id")?.stringValue,
                   let parentID = item.attribute(forName: "parentID")?.stringValue else { return nil }
 
+            var artURL: URL?
             let title = (try? item.nodes(forXPath: "./*[local-name()='title']"))?.first?.stringValue ?? ""
             let classType = (try? item.nodes(forXPath: "./*[local-name()='class']"))?.first?.stringValue ?? ""
             let uri = (try? item.nodes(forXPath: "./*[local-name()='res']"))?.first?.stringValue ?? ""
-            let albumArtURI = (try? item.nodes(forXPath: "./*[local-name()='albumArtURI']"))?.first?.stringValue
+            if let albumArtURI = (try? item.nodes(forXPath: "./*[local-name()='albumArtURI']"))?.first?.stringValue {
+                artURL = URL(string: albumArtURI)
+            }
+            
             let creator = (try? item.nodes(forXPath: "./*[local-name()='creator']"))?.first?.stringValue
 
             return DIDLItem(
@@ -418,7 +422,7 @@ actor SonosController: SonosControlling {
                 title: title,
                 classType: classType,
                 uri: uri,
-                albumArtURI: albumArtURI,
+                albumArtURI: artURL,
                 creator: creator
             )
         }

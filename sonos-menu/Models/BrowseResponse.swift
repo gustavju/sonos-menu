@@ -3,6 +3,8 @@
 //  sonos-menu
 //
 
+import Foundation
+
 struct BrowseResult: Codable, Hashable, Sendable {
     let resultXML: String
     let numberReturned: Int
@@ -28,7 +30,7 @@ struct DIDLItem: Codable, Hashable, Sendable, Identifiable {
     let title: String
     let classType: String // e.g. "object.item.audioItem.musicTrack"
     let uri: String
-    let albumArtURI: String?
+    let albumArtURI: URL?
     let creator: String?
 
     nonisolated init(
@@ -37,7 +39,7 @@ struct DIDLItem: Codable, Hashable, Sendable, Identifiable {
         title: String,
         classType: String,
         uri: String,
-        albumArtURI: String?,
+        albumArtURI: URL?,
         creator: String?
     ) {
         self.id = id
