@@ -22,4 +22,5 @@ protocol SonosControlling: Sendable {
     func joinGroup(member: Device, coordinatorID: String) async throws
     func leaveGroup(member: Device) async throws
     func fetchNowPlaying(on device: Device) async throws -> Playback
+    func browseContentDirectory(on device: Device, objectID: String, browseFlag: String, startingIndex: Int, requestedCount: Int) async throws -> [DIDLItem]
 }

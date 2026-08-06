@@ -21,6 +21,7 @@ struct ContentView: View {
         content
             .task(id: viewModel.selectedGroupPlayback.artURL) {
                 await loadArtworkTheme()
+                await viewModel.getFavorites()
             }
             .onAppear(perform: viewModel.onMenuAppear)
             .onDisappear(perform: viewModel.onMenuDisappear)
@@ -38,6 +39,17 @@ struct ContentView: View {
 
             if !viewModel.allHouseholdRooms.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
+                    
+                    if !viewModel.allFavorites.isEmpty {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(viewModel.allFavorites.sorted(by: ) { $0.title > $1.title }) { fav in
+                                Text(fav.title)
+                                    .font(.system(size: 13))
+                            }
+                        }
+                    }
+                    
+                    
                     HouseholdSelector(
                         households: viewModel.households,
                         selectedHouseholdID: $viewModel.selectedHouseholdID,

@@ -159,6 +159,40 @@ actor SonosController: SonosControlling {
 
         return info
     }
+    
+    func browseContentDirectory(
+        on device: Device,
+        objectID: String = "FV:2",
+        browseFlag: String = "BrowseDirectChildren",
+        startingIndex: Int = 0,
+        requestedCount: Int = 100
+    ) async throws -> [DIDLItem] {
+        let browseData = try await post(
+            body: soapEnvelope(service: .contentDirectory, action: "Browse", args: [
+                "ObjectID": objectID,
+                "BrowseFlag": browseFlag,
+                "Filter": "*",
+                "StartingIndex": String(startingIndex),
+                "RequestedCount": String(requestedCount),
+                "SortCriteria": ""
+            ]),
+            to: device,
+            service: .contentDirectory
+        )
+        
+        if let text = String(data: browseData, encoding: .utf8) {
+            print("Browsdata XML:\n\(text)")
+        }
+        
+        let response: BrowseResult = parseBrowseResponse(browseData)
+        
+        
+        
+        let items = parseDIDLItems(response.resultXML)
+        
+        
+        return items
+    }
 
     // MARK: - Volume
 
@@ -338,7 +372,59 @@ actor SonosController: SonosControlling {
     }
 
     // MARK: - Parsers
+    
+    private func parseBrowseResponse(_ data: Data) -> BrowseResult {
+        guard let xml = try? XMLDocument(data: data, options: []),
+              let root = xml.rootElement(),
+              let resultNode = (try? root.nodes(forXPath: "//*[local-name()='Result']"))?.first as? XMLElement,
+              let resultXML = resultNode.stringValue,
+              let numberReturnedNode = (try? root.nodes(forXPath: "//*[local-name()='NumberReturned']"))?.first as? XMLElement,
+              let totalMatchesNode = (try? root.nodes(forXPath: "//*[local-name()='TotalMatches']"))?.first as? XMLElement,
+              let updateIDNode = (try? root.nodes(forXPath: "//*[local-name()='UpdateID']"))?.first as? XMLElement else {
+            print("parseBrowseResponse: could not parse SOAP response")
+            return BrowseResult(resultXML: "", numberReturned: 0, totalMatches: 0, updateID: "")
+        }
 
+        let numberReturned = Int(numberReturnedNode.stringValue ?? "") ?? 0
+        let totalMatches = Int(totalMatchesNode.stringValue ?? "") ?? 0
+        let updateID = updateIDNode.stringValue ?? ""
+
+        return BrowseResult(resultXML: resultXML, numberReturned: numberReturned, totalMatches: totalMatches, updateID: updateID)
+    }
+    
+    private func parseDIDLItems(_ resultXML: String) -> [DIDLItem] {
+        guard let data = resultXML.data(using: .utf8),
+              let xml = try? XMLDocument(data: data, options: []),
+              let root = xml.rootElement() else {
+            print("parseDIDLItems: could not parse DIDL-Lite XML")
+            return []
+        }
+
+        let itemNodes = (try? root.nodes(forXPath: "//*[local-name()='item']"))?.compactMap { $0 as? XMLElement } ?? []
+
+        return itemNodes.compactMap { item -> DIDLItem? in
+            guard let id = item.attribute(forName: "id")?.stringValue,
+                  let parentID = item.attribute(forName: "parentID")?.stringValue else { return nil }
+
+            let title = (try? item.nodes(forXPath: "./*[local-name()='title']"))?.first?.stringValue ?? ""
+            let classType = (try? item.nodes(forXPath: "./*[local-name()='class']"))?.first?.stringValue ?? ""
+            let uri = (try? item.nodes(forXPath: "./*[local-name()='res']"))?.first?.stringValue ?? ""
+            let albumArtURI = (try? item.nodes(forXPath: "./*[local-name()='albumArtURI']"))?.first?.stringValue
+            let creator = (try? item.nodes(forXPath: "./*[local-name()='creator']"))?.first?.stringValue
+
+            return DIDLItem(
+                id: id,
+                parentId: parentID,
+                title: title,
+                classType: classType,
+                uri: uri,
+                albumArtURI: albumArtURI,
+                creator: creator
+            )
+        }
+    }
+
+    
     private func parseZoneGroupState(_ data: Data) -> ZoneGroupTopology {
         guard let xml = try? XMLDocument(data: data, options: []),
               let root = xml.rootElement(),
