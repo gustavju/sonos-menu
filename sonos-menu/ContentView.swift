@@ -21,6 +21,7 @@ struct ContentView: View {
         content
             .task(id: viewModel.selectedGroupPlayback.artURL) {
                 await loadArtworkTheme()
+                await viewModel.getFavorites()
             }
             .onAppear(perform: viewModel.onMenuAppear)
             .onDisappear(perform: viewModel.onMenuDisappear)
@@ -38,16 +39,22 @@ struct ContentView: View {
 
             if !viewModel.allHouseholdRooms.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
+                                    
                     HouseholdSelector(
                         households: viewModel.households,
                         selectedHouseholdID: $viewModel.selectedHouseholdID,
                         onSelect: viewModel.selectHousehold
                     )
+                    
                     headerSection
                     Divider()
                     groupListSection
                     Divider()
                     roomListSection
+                    FavoritesList(
+                        favorites: viewModel.allFavorites,
+                        onSelect: viewModel.playFavorite
+                    )
                     footerStatus
                 }
                 .padding()
@@ -93,9 +100,13 @@ struct ContentView: View {
         NowPlayingView(playback: viewModel.selectedGroupPlayback) {
             PlaybackControls(
                 isPlaying: viewModel.selectedGroupPlayback.transportState.isPlaying,
+                shuffle: viewModel.selectedGroupPlayback.shuffle,
+                repeat: viewModel.selectedGroupPlayback.repeat,
                 onPrevious: viewModel.previousTrack,
                 onToggle: viewModel.togglePlayPause,
-                onNext: viewModel.nextTrack
+                onNext: viewModel.nextTrack,
+                onToggleShuffle: viewModel.toggleShuffle,
+                onCycleRepeat: viewModel.cycleRepeat
             )
             .frame(maxWidth: .infinity, alignment: .center)
         }

@@ -306,6 +306,25 @@ final class SonosRepository {
     nonisolated private func storeAllTopologies() async -> [ZoneGroupTopology] {
         await store.allTopologies()
     }
+    
+    func fetchFavorites(for group: SonosGroup) async -> [DIDLItem] {
+        var didlItems: [DIDLItem] = []
+        guard let device = await self.store.commandDevice(forGroupID: group.id) else { return didlItems }
+        do {
+            didlItems = try await self.controller.browseContentDirectory(
+                on: device,
+                objectID: "FV:2",
+                browseFlag: "BrowseDirectChildren",
+                startingIndex: 0,
+                requestedCount: 100
+            )
+        } catch {
+            await MainActor.run { [weak self] in
+                self?.snapshot.lastError = error.localizedDescription
+            }
+        }
+        return didlItems
+    }
 
     nonisolated private func fetchPlayback(for topology: ZoneGroupTopology) async -> [String: Playback] {
         await withTaskGroup(of: (String, Playback)?.self) { group in
@@ -394,6 +413,36 @@ final class SonosRepository {
                 } else {
                     try await self.controller.play(on: device)
                 }
+                await self.refresh()
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func playFavorite(_ favorite: DIDLItem, on group: SonosGroup) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.commandDevice(forGroupID: group.id) else { return }
+            do {
+                try await self.controller.playFavorite(favorite, on: device)
+                await self.refresh()
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func setPlayMode(shuffle: ShuffleMode, repeat repeatMode: RepeatMode, for group: SonosGroup) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.commandDevice(forGroupID: group.id) else { return }
+            do {
+                try await self.controller.setPlayMode(shuffle: shuffle, repeat: repeatMode, on: device)
                 await self.refresh()
             } catch {
                 await MainActor.run { [weak self] in

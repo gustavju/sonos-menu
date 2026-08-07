@@ -43,6 +43,8 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
     var allHouseholdRooms: [Room] {
         selectedHousehold?.rooms.sorted { $0.name < $1.name } ?? []
     }
+    
+    var allFavorites: [DIDLItem] = [];
 
     var selectedGroupPlayback: Playback {
         selectedGroup?.playback ?? Playback()
@@ -104,10 +106,37 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
     }
 
     // MARK: - Actions
+    
+    func getFavorites() async {
+        guard let group = selectedGroup else { return }
+        allFavorites = await repository.fetchFavorites(for: group)
+    }
 
     func togglePlayPause() {
         guard let group = selectedGroup else { return }
         repository.togglePlayPause(for: group)
+    }
+
+    func playFavorite(_ favorite: DIDLItem) {
+        guard let group = selectedGroup else { return }
+        repository.playFavorite(favorite, on: group)
+    }
+
+    func toggleShuffle() {
+        guard let group = selectedGroup else { return }
+        let shuffle: ShuffleMode = group.playback.shuffle == .on ? .off : .on
+        repository.setPlayMode(shuffle: shuffle, repeat: group.playback.repeat, for: group)
+    }
+
+    func cycleRepeat() {
+        guard let group = selectedGroup else { return }
+        let nextRepeat: RepeatMode
+        switch group.playback.repeat {
+        case .off: nextRepeat = .all
+        case .all: nextRepeat = .one
+        case .one: nextRepeat = .off
+        }
+        repository.setPlayMode(shuffle: group.playback.shuffle, repeat: nextRepeat, for: group)
     }
 
     func nextTrack() {

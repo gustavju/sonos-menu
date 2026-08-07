@@ -132,6 +132,74 @@ actor SonosController: SonosControlling {
         _ = try await post(body: body, to: device, service: .avTransport)
     }
 
+    func setPlayMode(shuffle: ShuffleMode, repeat repeatMode: RepeatMode, on device: Device) async throws {
+        let body = soapEnvelope(
+            service: .avTransport,
+            action: "SetPlayMode",
+            args: [
+                "InstanceID": "0",
+                "NewPlayMode": sonosPlayMode(shuffle: shuffle, repeat: repeatMode)
+            ]
+        )
+        _ = try await post(body: body, to: device, service: .avTransport)
+    }
+
+    /// Adds a Sonos favorite to the group's queue and begins playback there.
+    ///
+    /// Sonos service containers (such as Spotify albums and playlists) reject
+    /// `SetAVTransportURI` with UPnP error 714. They must be added to the
+    /// coordinator's queue instead.
+    func playFavorite(_ favorite: DIDLItem, on device: Device) async throws {
+        let metadata = favorite.resourceMetadata ?? favoriteMetadata(for: favorite)
+
+        let addResponse = try await post(
+            body: soapEnvelope(
+                service: .avTransport,
+                action: "AddURIToQueue",
+                args: [
+                    "InstanceID": "0",
+                    "EnqueuedURI": favorite.uri,
+                    "EnqueuedURIMetaData": metadata,
+                    "DesiredFirstTrackNumberEnqueued": "0",
+                    "EnqueueAsNext": "0"
+                ]
+            ),
+            to: device,
+            service: .avTransport
+        )
+        let firstTrackNumber = try parseFirstTrackNumber(from: addResponse)
+
+        _ = try await post(
+            body: soapEnvelope(
+                service: .avTransport,
+                action: "SetAVTransportURI",
+                args: [
+                    "InstanceID": "0",
+                    "CurrentURI": "x-rincon-queue:\(device.id)#0",
+                    "CurrentURIMetaData": ""
+                ]
+            ),
+            to: device,
+            service: .avTransport
+        )
+
+        _ = try await post(
+            body: soapEnvelope(
+                service: .avTransport,
+                action: "Seek",
+                args: [
+                    "InstanceID": "0",
+                    "Unit": "TRACK_NR",
+                    "Target": String(firstTrackNumber)
+                ]
+            ),
+            to: device,
+            service: .avTransport
+        )
+
+        try await play(on: device)
+    }
+
     func fetchNowPlaying(on device: Device) async throws -> Playback {
         let positionData = try await post(
             body: soapEnvelope(service: .avTransport, action: "GetPositionInfo", args: ["InstanceID": "0"]),
@@ -157,7 +225,54 @@ actor SonosController: SonosControlling {
             print("TransportState: \(state)")
         }
 
+        let settingsData = try? await post(
+            body: soapEnvelope(service: .avTransport, action: "GetTransportSettings", args: ["InstanceID": "0"]),
+            to: device,
+            service: .avTransport
+        )
+        if let data = settingsData,
+           let xml = try? XMLDocument(data: data, options: []),
+           let playMode = (try? xml.nodes(forXPath: "//PlayMode"))?.first?.stringValue {
+            let modes = playbackModes(for: playMode)
+            info.shuffle = modes.shuffle
+            info.repeat = modes.repeat
+        }
+
         return info
+    }
+    
+    func browseContentDirectory(
+        on device: Device,
+        objectID: String = "FV:2",
+        browseFlag: String = "BrowseDirectChildren",
+        startingIndex: Int = 0,
+        requestedCount: Int = 100
+    ) async throws -> [DIDLItem] {
+        let browseData = try await post(
+            body: soapEnvelope(service: .contentDirectory, action: "Browse", args: [
+                "ObjectID": objectID,
+                "BrowseFlag": browseFlag,
+                "Filter": "*",
+                "StartingIndex": String(startingIndex),
+                "RequestedCount": String(requestedCount),
+                "SortCriteria": ""
+            ]),
+            to: device,
+            service: .contentDirectory
+        )
+        
+        if let text = String(data: browseData, encoding: .utf8) {
+            print("Browsdata XML:\n\(text)")
+        }
+        
+        let response: BrowseResult = parseBrowseResponse(browseData)
+        
+        
+        
+        let items = parseDIDLItems(response.resultXML, device: device)
+        
+        
+        return items
     }
 
     // MARK: - Volume
@@ -337,8 +452,113 @@ actor SonosController: SonosControlling {
         """
     }
 
-    // MARK: - Parsers
+    private func favoriteMetadata(for favorite: DIDLItem) -> String {
+        let creator = favorite.creator.map { "<dc:creator>\($0.xmlEscaped)</dc:creator>" } ?? ""
+        let albumArt = favorite.albumArtURI.map { "<upnp:albumArtURI>\($0.absoluteString.xmlEscaped)</upnp:albumArtURI>" } ?? ""
+        let protocolInfo = favorite.resourceProtocolInfo
+            ?? "x-rincon-cpcontainer:*:*:*"
 
+        return """
+        <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">
+        <item id="\(favorite.id.xmlEscaped)" parentID="\(favorite.parentId.xmlEscaped)" restricted="true"><dc:title>\(favorite.title.xmlEscaped)</dc:title>\(creator)<upnp:class>\(favorite.classType.xmlEscaped)</upnp:class>\(albumArt)<res protocolInfo="\(protocolInfo.xmlEscaped)">\(favorite.uri.xmlEscaped)</res></item>
+        </DIDL-Lite>
+        """
+    }
+
+    private func sonosPlayMode(shuffle: ShuffleMode, repeat repeatMode: RepeatMode) -> String {
+        switch (shuffle, repeatMode) {
+        case (.off, .off): return "NORMAL"
+        case (.off, .all): return "REPEAT_ALL"
+        case (.off, .one): return "REPEAT_ONE"
+        case (.on, .off): return "SHUFFLE_NOREPEAT"
+        case (.on, .all): return "SHUFFLE"
+        case (.on, .one): return "SHUFFLE_REPEAT_ONE"
+        }
+    }
+
+    private func playbackModes(for sonosPlayMode: String) -> (shuffle: ShuffleMode, repeat: RepeatMode) {
+        switch sonosPlayMode {
+        case "REPEAT_ALL": return (.off, .all)
+        case "REPEAT_ONE": return (.off, .one)
+        case "SHUFFLE_NOREPEAT": return (.on, .off)
+        case "SHUFFLE": return (.on, .all)
+        case "SHUFFLE_REPEAT_ONE": return (.on, .one)
+        default: return (.off, .off)
+        }
+    }
+
+    private func parseFirstTrackNumber(from data: Data) throws -> Int {
+        guard let xml = try? XMLDocument(data: data, options: []),
+              let value = (try? xml.nodes(forXPath: "//*[local-name()='FirstTrackNumberEnqueued']"))?.first?.stringValue,
+              let trackNumber = Int(value) else {
+            throw SonosError.parseFailed
+        }
+        return trackNumber
+    }
+
+    // MARK: - Parsers
+    
+    private func parseBrowseResponse(_ data: Data) -> BrowseResult {
+        guard let xml = try? XMLDocument(data: data, options: []),
+              let root = xml.rootElement(),
+              let resultNode = (try? root.nodes(forXPath: "//*[local-name()='Result']"))?.first as? XMLElement,
+              let resultXML = resultNode.stringValue,
+              let numberReturnedNode = (try? root.nodes(forXPath: "//*[local-name()='NumberReturned']"))?.first as? XMLElement,
+              let totalMatchesNode = (try? root.nodes(forXPath: "//*[local-name()='TotalMatches']"))?.first as? XMLElement,
+              let updateIDNode = (try? root.nodes(forXPath: "//*[local-name()='UpdateID']"))?.first as? XMLElement else {
+            print("parseBrowseResponse: could not parse SOAP response")
+            return BrowseResult(resultXML: "", numberReturned: 0, totalMatches: 0, updateID: "")
+        }
+
+        let numberReturned = Int(numberReturnedNode.stringValue ?? "") ?? 0
+        let totalMatches = Int(totalMatchesNode.stringValue ?? "") ?? 0
+        let updateID = updateIDNode.stringValue ?? ""
+
+        return BrowseResult(resultXML: resultXML, numberReturned: numberReturned, totalMatches: totalMatches, updateID: updateID)
+    }
+    
+    private func parseDIDLItems(_ resultXML: String, device: Device) -> [DIDLItem] {
+        guard let data = resultXML.data(using: .utf8),
+              let xml = try? XMLDocument(data: data, options: []),
+              let root = xml.rootElement() else {
+            print("parseDIDLItems: could not parse DIDL-Lite XML")
+            return []
+        }
+
+        let itemNodes = (try? root.nodes(forXPath: "//*[local-name()='item']"))?.compactMap { $0 as? XMLElement } ?? []
+
+        return itemNodes.compactMap { item -> DIDLItem? in
+            guard let id = item.attribute(forName: "id")?.stringValue,
+                  let parentID = item.attribute(forName: "parentID")?.stringValue else { return nil }
+
+            var artURL: URL?
+            let title = (try? item.nodes(forXPath: "./*[local-name()='title']"))?.first?.stringValue ?? ""
+            let classType = (try? item.nodes(forXPath: "./*[local-name()='class']"))?.first?.stringValue ?? ""
+            let resource = (try? item.nodes(forXPath: "./*[local-name()='res']"))?.first as? XMLElement
+            let uri = resource?.stringValue ?? ""
+            let resourceProtocolInfo = resource?.attribute(forName: "protocolInfo")?.stringValue
+            let resourceMetadata = (try? item.nodes(forXPath: "./*[local-name()='resMD']"))?.first?.stringValue
+            if let albumArtURI = (try? item.nodes(forXPath: "./*[local-name()='albumArtURI']"))?.first?.stringValue {
+                artURL = URL(string: albumArtURI)
+            }
+            
+            let creator = (try? item.nodes(forXPath: "./*[local-name()='creator']"))?.first?.stringValue
+
+            return DIDLItem(
+                id: id,
+                parentId: parentID,
+                title: title,
+                classType: classType,
+                uri: uri,
+                resourceProtocolInfo: resourceProtocolInfo,
+                resourceMetadata: resourceMetadata,
+                albumArtURI: artURL,
+                creator: creator
+            )
+        }
+    }
+
+    
     private func parseZoneGroupState(_ data: Data) -> ZoneGroupTopology {
         guard let xml = try? XMLDocument(data: data, options: []),
               let root = xml.rootElement(),
@@ -424,7 +644,11 @@ actor SonosController: SonosControlling {
 
             if let rawArtURL = (try? trackXML.nodes(forXPath: "//d:item/u:albumArtURI"))?.first?.stringValue ??
                                 (try? trackXML.nodes(forXPath: "//albumArtURI"))?.first?.stringValue {
-                artURL = URL(string: rawArtURL) ?? URL(string: rawArtURL, relativeTo: device.baseURL)
+                if let url = URL(string: rawArtURL), url.scheme != nil {
+                    artURL = url
+                } else {
+                    artURL = URL(string: rawArtURL, relativeTo: device.baseURL)?.absoluteURL
+                }
             }
         }
 

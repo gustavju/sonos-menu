@@ -14,6 +14,8 @@ protocol SonosControlling: Sendable {
     func pause(on device: Device) async throws
     func nextTrack(on device: Device) async throws
     func previousTrack(on device: Device) async throws
+    func playFavorite(_ favorite: DIDLItem, on device: Device) async throws
+    func setPlayMode(shuffle: ShuffleMode, repeat: RepeatMode, on device: Device) async throws
     func setVolume(_ volume: Int, on device: Device) async throws
     func setGroupVolume(_ volume: Int, on device: Device, groupID: String) async throws
     func getGroupVolume(on device: Device, groupID: String) async throws -> Int
@@ -22,4 +24,5 @@ protocol SonosControlling: Sendable {
     func joinGroup(member: Device, coordinatorID: String) async throws
     func leaveGroup(member: Device) async throws
     func fetchNowPlaying(on device: Device) async throws -> Playback
+    func browseContentDirectory(on device: Device, objectID: String, browseFlag: String, startingIndex: Int, requestedCount: Int) async throws -> [DIDLItem]
 }
