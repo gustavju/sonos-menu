@@ -8,6 +8,7 @@ internal import System
 
 struct FavoritesList: View {
     let favorites: [DIDLItem]
+    let onSelect: (DIDLItem) -> Void
     @State private var isExpanded: Bool = false
     
     var body: some View {
@@ -17,7 +18,8 @@ struct FavoritesList: View {
                     LazyHStack(alignment: .center, spacing: 2) {
                         ForEach(favorites) { fav in
                             FavoriteItem(
-                                favorite: fav
+                                favorite: fav,
+                                onSelect: onSelect
                             )
                         }
                     }
@@ -37,20 +39,22 @@ struct FavoritesList: View {
     
 struct FavoriteItem: View {
     let favorite: DIDLItem
+    let onSelect: (DIDLItem) -> Void
     let contentHeight: CGFloat = 65
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            artwork
-                .frame(width: contentHeight, height: contentHeight)
-            
-            Text(favorite.title.isEmpty ? "" : favorite.title)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)            
-            
+        Button(action: { onSelect(favorite) }) {
+            VStack(alignment: .leading, spacing: 4) {
+                artwork
+                    .frame(width: contentHeight, height: contentHeight)
+
+                Text(favorite.title.isEmpty ? "" : favorite.title)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
-        //.onTapGesture(perform: onTap)
+        .buttonStyle(.plain)
         .frame(width: contentHeight, height: 60)
     }
 
@@ -120,5 +124,5 @@ struct FavoriteItem: View {
             creator: nil
             )
             
-    ])
+    ], onSelect: { _ in })
 }

@@ -52,7 +52,8 @@ struct ContentView: View {
                     Divider()
                     roomListSection
                     FavoritesList(
-                        favorites: viewModel.allFavorites
+                        favorites: viewModel.allFavorites,
+                        onSelect: viewModel.playFavorite
                     )
                     footerStatus
                 }

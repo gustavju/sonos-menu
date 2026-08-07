@@ -30,6 +30,12 @@ struct DIDLItem: Codable, Hashable, Sendable, Identifiable {
     let title: String
     let classType: String // e.g. "object.item.audioItem.musicTrack"
     let uri: String
+    /// UPnP protocol info from the favorite's `res` element. Sonos validates
+    /// this when accepting a URI through AVTransport.
+    let resourceProtocolInfo: String?
+    /// Sonos-provided metadata for the resource (`r:resMD`). This is already
+    /// in the format AVTransport expects for service containers.
+    let resourceMetadata: String?
     let albumArtURI: URL?
     let creator: String?
 
@@ -39,6 +45,8 @@ struct DIDLItem: Codable, Hashable, Sendable, Identifiable {
         title: String,
         classType: String,
         uri: String,
+        resourceProtocolInfo: String? = nil,
+        resourceMetadata: String? = nil,
         albumArtURI: URL?,
         creator: String?
     ) {
@@ -47,6 +55,8 @@ struct DIDLItem: Codable, Hashable, Sendable, Identifiable {
         self.title = title
         self.classType = classType
         self.uri = uri
+        self.resourceProtocolInfo = resourceProtocolInfo
+        self.resourceMetadata = resourceMetadata
         self.albumArtURI = albumArtURI
         self.creator = creator
     }

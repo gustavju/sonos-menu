@@ -132,6 +132,62 @@ actor SonosController: SonosControlling {
         _ = try await post(body: body, to: device, service: .avTransport)
     }
 
+    /// Adds a Sonos favorite to the group's queue and begins playback there.
+    ///
+    /// Sonos service containers (such as Spotify albums and playlists) reject
+    /// `SetAVTransportURI` with UPnP error 714. They must be added to the
+    /// coordinator's queue instead.
+    func playFavorite(_ favorite: DIDLItem, on device: Device) async throws {
+        let metadata = favorite.resourceMetadata ?? favoriteMetadata(for: favorite)
+
+        let addResponse = try await post(
+            body: soapEnvelope(
+                service: .avTransport,
+                action: "AddURIToQueue",
+                args: [
+                    "InstanceID": "0",
+                    "EnqueuedURI": favorite.uri,
+                    "EnqueuedURIMetaData": metadata,
+                    "DesiredFirstTrackNumberEnqueued": "0",
+                    "EnqueueAsNext": "0"
+                ]
+            ),
+            to: device,
+            service: .avTransport
+        )
+        let firstTrackNumber = try parseFirstTrackNumber(from: addResponse)
+
+        _ = try await post(
+            body: soapEnvelope(
+                service: .avTransport,
+                action: "SetAVTransportURI",
+                args: [
+                    "InstanceID": "0",
+                    "CurrentURI": "x-rincon-queue:\(device.id)#0",
+                    "CurrentURIMetaData": ""
+                ]
+            ),
+            to: device,
+            service: .avTransport
+        )
+
+        _ = try await post(
+            body: soapEnvelope(
+                service: .avTransport,
+                action: "Seek",
+                args: [
+                    "InstanceID": "0",
+                    "Unit": "TRACK_NR",
+                    "Target": String(firstTrackNumber)
+                ]
+            ),
+            to: device,
+            service: .avTransport
+        )
+
+        try await play(on: device)
+    }
+
     func fetchNowPlaying(on device: Device) async throws -> Playback {
         let positionData = try await post(
             body: soapEnvelope(service: .avTransport, action: "GetPositionInfo", args: ["InstanceID": "0"]),
@@ -371,6 +427,28 @@ actor SonosController: SonosControlling {
         """
     }
 
+    private func favoriteMetadata(for favorite: DIDLItem) -> String {
+        let creator = favorite.creator.map { "<dc:creator>\($0.xmlEscaped)</dc:creator>" } ?? ""
+        let albumArt = favorite.albumArtURI.map { "<upnp:albumArtURI>\($0.absoluteString.xmlEscaped)</upnp:albumArtURI>" } ?? ""
+        let protocolInfo = favorite.resourceProtocolInfo
+            ?? "x-rincon-cpcontainer:*:*:*"
+
+        return """
+        <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">
+        <item id="\(favorite.id.xmlEscaped)" parentID="\(favorite.parentId.xmlEscaped)" restricted="true"><dc:title>\(favorite.title.xmlEscaped)</dc:title>\(creator)<upnp:class>\(favorite.classType.xmlEscaped)</upnp:class>\(albumArt)<res protocolInfo="\(protocolInfo.xmlEscaped)">\(favorite.uri.xmlEscaped)</res></item>
+        </DIDL-Lite>
+        """
+    }
+
+    private func parseFirstTrackNumber(from data: Data) throws -> Int {
+        guard let xml = try? XMLDocument(data: data, options: []),
+              let value = (try? xml.nodes(forXPath: "//*[local-name()='FirstTrackNumberEnqueued']"))?.first?.stringValue,
+              let trackNumber = Int(value) else {
+            throw SonosError.parseFailed
+        }
+        return trackNumber
+    }
+
     // MARK: - Parsers
     
     private func parseBrowseResponse(_ data: Data) -> BrowseResult {
@@ -409,7 +487,10 @@ actor SonosController: SonosControlling {
             var artURL: URL?
             let title = (try? item.nodes(forXPath: "./*[local-name()='title']"))?.first?.stringValue ?? ""
             let classType = (try? item.nodes(forXPath: "./*[local-name()='class']"))?.first?.stringValue ?? ""
-            let uri = (try? item.nodes(forXPath: "./*[local-name()='res']"))?.first?.stringValue ?? ""
+            let resource = (try? item.nodes(forXPath: "./*[local-name()='res']"))?.first as? XMLElement
+            let uri = resource?.stringValue ?? ""
+            let resourceProtocolInfo = resource?.attribute(forName: "protocolInfo")?.stringValue
+            let resourceMetadata = (try? item.nodes(forXPath: "./*[local-name()='resMD']"))?.first?.stringValue
             if let albumArtURI = (try? item.nodes(forXPath: "./*[local-name()='albumArtURI']"))?.first?.stringValue {
                 artURL = URL(string: albumArtURI)
             }
@@ -422,6 +503,8 @@ actor SonosController: SonosControlling {
                 title: title,
                 classType: classType,
                 uri: uri,
+                resourceProtocolInfo: resourceProtocolInfo,
+                resourceMetadata: resourceMetadata,
                 albumArtURI: artURL,
                 creator: creator
             )

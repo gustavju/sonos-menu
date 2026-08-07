@@ -117,6 +117,11 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         repository.togglePlayPause(for: group)
     }
 
+    func playFavorite(_ favorite: DIDLItem) {
+        guard let group = selectedGroup else { return }
+        repository.playFavorite(favorite, on: group)
+    }
+
     func nextTrack() {
         guard let group = selectedGroup else { return }
         repository.nextTrack(for: group)
