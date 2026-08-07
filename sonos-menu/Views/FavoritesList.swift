@@ -9,57 +9,102 @@ internal import System
 struct FavoritesList: View {
     let favorites: [DIDLItem]
     let onSelect: (DIDLItem) -> Void
-    @State private var isExpanded: Bool = false
+    @State private var isExpanded: Bool = true
     
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             if !favorites.isEmpty {
-                ScrollView([.horizontal]) {
-                    LazyHStack(alignment: .center, spacing: 2) {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(), spacing: 8),
+                            GridItem(.flexible(), spacing: 8)
+                        ],
+                        spacing: 8
+                    ) {
                         ForEach(favorites) { fav in
-                            FavoriteItem(
+                            FavoriteTile(
                                 favorite: fav,
                                 onSelect: onSelect
                             )
                         }
                     }
                 }
-                .frame(height: 100)
+                .frame(maxHeight: 190)
                 Divider()
             }
         } label: {
-            Text("Favorites")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("Favorites")
+                Spacer()
+                Text("\(favorites.count)")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 }
 
-    
-    
-struct FavoriteItem: View {
+struct FavoriteTile: View {
     let favorite: DIDLItem
     let onSelect: (DIDLItem) -> Void
-    let contentHeight: CGFloat = 65
+    @State private var isHovered = false
+
+    private let artworkSize: CGFloat = 56
     
     var body: some View {
         Button(action: { onSelect(favorite) }) {
-            VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 9) {
                 artwork
-                    .frame(width: contentHeight, height: contentHeight)
+                    .frame(width: artworkSize, height: artworkSize)
 
-                Text(favorite.title.isEmpty ? "" : favorite.title)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                Text(favorite.title.isEmpty ? "Untitled favorite" : favorite.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+            .background(.quaternary.opacity(isHovered ? 0.8 : 0.45), in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(.primary.opacity(isHovered ? 0.16 : 0), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
-        .frame(width: contentHeight, height: 60)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityLabel("Play \(favorite.title)")
+        .help("Play \(favorite.title)")
     }
 
     @ViewBuilder
     private var artwork: some View {
+        ZStack {
+            artworkContent
+
+            if isHovered {
+                Circle()
+                    .fill(.black.opacity(0.58))
+                    .frame(width: 30, height: 30)
+                    .overlay {
+                        Image(systemName: "play.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .offset(x: 1)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var artworkContent: some View {
         if let artURL = favorite.albumArtURI {
             AsyncImage(url: artURL) { phase in
                 switch phase {
@@ -70,7 +115,7 @@ struct FavoriteItem: View {
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
 
                 case .failure(let error):
                     Text(error.localizedDescription)
@@ -85,7 +130,7 @@ struct FavoriteItem: View {
     }
     
     private var placeholder: some View {
-        RoundedRectangle(cornerRadius: 6)
+        RoundedRectangle(cornerRadius: 7)
             .fill(.quaternary)
             .overlay(Image(systemName: "music.note").foregroundStyle(.secondary))
     }

@@ -15,6 +15,7 @@ protocol SonosControlling: Sendable {
     func nextTrack(on device: Device) async throws
     func previousTrack(on device: Device) async throws
     func playFavorite(_ favorite: DIDLItem, on device: Device) async throws
+    func setPlayMode(shuffle: ShuffleMode, repeat: RepeatMode, on device: Device) async throws
     func setVolume(_ volume: Int, on device: Device) async throws
     func setGroupVolume(_ volume: Int, on device: Device, groupID: String) async throws
     func getGroupVolume(on device: Device, groupID: String) async throws -> Int

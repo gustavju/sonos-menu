@@ -100,9 +100,13 @@ struct ContentView: View {
         NowPlayingView(playback: viewModel.selectedGroupPlayback) {
             PlaybackControls(
                 isPlaying: viewModel.selectedGroupPlayback.transportState.isPlaying,
+                shuffle: viewModel.selectedGroupPlayback.shuffle,
+                repeat: viewModel.selectedGroupPlayback.repeat,
                 onPrevious: viewModel.previousTrack,
                 onToggle: viewModel.togglePlayPause,
-                onNext: viewModel.nextTrack
+                onNext: viewModel.nextTrack,
+                onToggleShuffle: viewModel.toggleShuffle,
+                onCycleRepeat: viewModel.cycleRepeat
             )
             .frame(maxWidth: .infinity, alignment: .center)
         }

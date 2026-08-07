@@ -122,6 +122,23 @@ final class SonosMenuViewModel: SonosRepositoryDelegate {
         repository.playFavorite(favorite, on: group)
     }
 
+    func toggleShuffle() {
+        guard let group = selectedGroup else { return }
+        let shuffle: ShuffleMode = group.playback.shuffle == .on ? .off : .on
+        repository.setPlayMode(shuffle: shuffle, repeat: group.playback.repeat, for: group)
+    }
+
+    func cycleRepeat() {
+        guard let group = selectedGroup else { return }
+        let nextRepeat: RepeatMode
+        switch group.playback.repeat {
+        case .off: nextRepeat = .all
+        case .all: nextRepeat = .one
+        case .one: nextRepeat = .off
+        }
+        repository.setPlayMode(shuffle: group.playback.shuffle, repeat: nextRepeat, for: group)
+    }
+
     func nextTrack() {
         guard let group = selectedGroup else { return }
         repository.nextTrack(for: group)

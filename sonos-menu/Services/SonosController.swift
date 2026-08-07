@@ -132,6 +132,18 @@ actor SonosController: SonosControlling {
         _ = try await post(body: body, to: device, service: .avTransport)
     }
 
+    func setPlayMode(shuffle: ShuffleMode, repeat repeatMode: RepeatMode, on device: Device) async throws {
+        let body = soapEnvelope(
+            service: .avTransport,
+            action: "SetPlayMode",
+            args: [
+                "InstanceID": "0",
+                "NewPlayMode": sonosPlayMode(shuffle: shuffle, repeat: repeatMode)
+            ]
+        )
+        _ = try await post(body: body, to: device, service: .avTransport)
+    }
+
     /// Adds a Sonos favorite to the group's queue and begins playback there.
     ///
     /// Sonos service containers (such as Spotify albums and playlists) reject
@@ -211,6 +223,19 @@ actor SonosController: SonosControlling {
            let parsed = Playback.TransportState(rawValue: state) {
             info.transportState = parsed
             print("TransportState: \(state)")
+        }
+
+        let settingsData = try? await post(
+            body: soapEnvelope(service: .avTransport, action: "GetTransportSettings", args: ["InstanceID": "0"]),
+            to: device,
+            service: .avTransport
+        )
+        if let data = settingsData,
+           let xml = try? XMLDocument(data: data, options: []),
+           let playMode = (try? xml.nodes(forXPath: "//PlayMode"))?.first?.stringValue {
+            let modes = playbackModes(for: playMode)
+            info.shuffle = modes.shuffle
+            info.repeat = modes.repeat
         }
 
         return info
@@ -440,6 +465,28 @@ actor SonosController: SonosControlling {
         """
     }
 
+    private func sonosPlayMode(shuffle: ShuffleMode, repeat repeatMode: RepeatMode) -> String {
+        switch (shuffle, repeatMode) {
+        case (.off, .off): return "NORMAL"
+        case (.off, .all): return "REPEAT_ALL"
+        case (.off, .one): return "REPEAT_ONE"
+        case (.on, .off): return "SHUFFLE_NOREPEAT"
+        case (.on, .all): return "SHUFFLE"
+        case (.on, .one): return "SHUFFLE_REPEAT_ONE"
+        }
+    }
+
+    private func playbackModes(for sonosPlayMode: String) -> (shuffle: ShuffleMode, repeat: RepeatMode) {
+        switch sonosPlayMode {
+        case "REPEAT_ALL": return (.off, .all)
+        case "REPEAT_ONE": return (.off, .one)
+        case "SHUFFLE_NOREPEAT": return (.on, .off)
+        case "SHUFFLE": return (.on, .all)
+        case "SHUFFLE_REPEAT_ONE": return (.on, .one)
+        default: return (.off, .off)
+        }
+    }
+
     private func parseFirstTrackNumber(from data: Data) throws -> Int {
         guard let xml = try? XMLDocument(data: data, options: []),
               let value = (try? xml.nodes(forXPath: "//*[local-name()='FirstTrackNumberEnqueued']"))?.first?.stringValue,
@@ -597,7 +644,11 @@ actor SonosController: SonosControlling {
 
             if let rawArtURL = (try? trackXML.nodes(forXPath: "//d:item/u:albumArtURI"))?.first?.stringValue ??
                                 (try? trackXML.nodes(forXPath: "//albumArtURI"))?.first?.stringValue {
-                artURL = URL(string: rawArtURL) ?? URL(string: rawArtURL, relativeTo: device.baseURL)
+                if let url = URL(string: rawArtURL), url.scheme != nil {
+                    artURL = url
+                } else {
+                    artURL = URL(string: rawArtURL, relativeTo: device.baseURL)?.absoluteURL
+                }
             }
         }
 

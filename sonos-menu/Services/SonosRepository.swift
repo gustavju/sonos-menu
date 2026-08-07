@@ -437,6 +437,21 @@ final class SonosRepository {
         }
     }
 
+    func setPlayMode(shuffle: ShuffleMode, repeat repeatMode: RepeatMode, for group: SonosGroup) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self,
+                  let device = await self.store.commandDevice(forGroupID: group.id) else { return }
+            do {
+                try await self.controller.setPlayMode(shuffle: shuffle, repeat: repeatMode, on: device)
+                await self.refresh()
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.snapshot.lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     func nextTrack(for group: SonosGroup) {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self,
