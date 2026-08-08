@@ -27,7 +27,7 @@ struct Room: Identifiable, Codable, Hashable, Sendable {
     var isMuted: Bool
     let isCoordinator: Bool
 
-    init(
+    nonisolated init(
         id: String,
         name: String,
         deviceID: String,

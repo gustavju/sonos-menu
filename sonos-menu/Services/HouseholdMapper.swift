@@ -33,9 +33,8 @@ enum HouseholdMapper {
 
         // Synthesize devices from topology member locations if discovery hasn't found them yet.
         for (memberID, host) in topology.memberLocations {
-            if deviceByID[memberID] == nil {
-                deviceByID[memberID] = .topologyHost(id: memberID, host: host)
-            }
+            if let _ = deviceByID[memberID] { continue }
+            deviceByID[memberID] = .topologyHost(id: memberID, host: host)
         }
 
         // Group raw topology groups by household ID. When topology is missing the household ID

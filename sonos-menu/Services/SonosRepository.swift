@@ -44,7 +44,8 @@ private actor RefreshStore {
     func device(for id: String) -> Device? { deviceStore[id] }
 
     func synthesize(from topology: ZoneGroupTopology) {
-        for (memberID, host) in topology.memberLocations where deviceStore[memberID] == nil {
+        for (memberID, host) in topology.memberLocations {
+            if let _ = deviceStore[memberID] { continue }
             deviceStore[memberID] = .topologyHost(id: memberID, host: host)
         }
     }
@@ -118,6 +119,9 @@ final class SonosRepository {
     /// with the newly discovered devices.
     private var pendingDiscoveryRefresh = false
     private var hasCompletedInitialDiscovery = false
+    /// Prevents an older status request from overwriting the result of a newer
+    /// next/previous command when the user presses transport controls quickly.
+    private var trackChangeRequestID = 0
     
     init(
         discovery: SSDPDiscoveryService,
@@ -453,33 +457,77 @@ final class SonosRepository {
     }
 
     func nextTrack(for group: SonosGroup) {
+        trackChangeRequestID += 1
+        let requestID = trackChangeRequestID
+
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self,
                   let device = await self.store.commandDevice(forGroupID: group.id) else { return }
             do {
                 try await self.controller.nextTrack(on: device)
-                await self.refresh()
             } catch {
                 await MainActor.run { [weak self] in
                     self?.snapshot.lastError = error.localizedDescription
                 }
+                return
             }
+
+            await self.fetchPlaybackAfterTrackChange(
+                on: device,
+                groupID: group.id,
+                requestID: requestID
+            )
         }
     }
 
     func previousTrack(for group: SonosGroup) {
+        trackChangeRequestID += 1
+        let requestID = trackChangeRequestID
+
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self,
                   let device = await self.store.commandDevice(forGroupID: group.id) else { return }
             do {
                 try await self.controller.previousTrack(on: device)
-                await self.refresh()
             } catch {
                 await MainActor.run { [weak self] in
                     self?.snapshot.lastError = error.localizedDescription
                 }
+                return
             }
+
+            await self.fetchPlaybackAfterTrackChange(
+                on: device,
+                groupID: group.id,
+                requestID: requestID
+            )
         }
+    }
+
+    private func fetchPlaybackAfterTrackChange(
+        on device: Device,
+        groupID: String,
+        requestID: Int
+    ) async {
+        // Sonos accepts the transport command before its metadata endpoint has
+        // necessarily advanced. A short delay avoids rendering the old track
+        // while still updating far sooner than the ten-second polling cycle.
+        try? await Task.sleep(for: .milliseconds(300))
+
+        guard let playback = try? await controller.fetchNowPlaying(on: device) else { return }
+        applyPlayback(playback, toGroupID: groupID, requestID: requestID)
+    }
+
+    private func applyPlayback(_ playback: Playback, toGroupID groupID: String, requestID: Int) {
+        guard requestID == trackChangeRequestID,
+              let householdIndex = snapshot.households.firstIndex(where: { household in
+                  household.groups.contains(where: { $0.id == groupID })
+              }),
+              let groupIndex = snapshot.households[householdIndex].groups.firstIndex(where: { $0.id == groupID })
+        else { return }
+
+        snapshot.households[householdIndex].groups[groupIndex].playback = playback
+        snapshot.lastRefresh = Date()
     }
 
     /// room.volume is updated optimistically by the caller before this method runs.
