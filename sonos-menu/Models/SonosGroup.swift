@@ -23,7 +23,7 @@ struct SonosGroup: Identifiable, Codable, Hashable, Sendable {
     /// Aggregate volume level for the whole group.
     var volume: Int
 
-    init(
+    nonisolated init(
         id: String,
         name: String,
         coordinatorID: String,

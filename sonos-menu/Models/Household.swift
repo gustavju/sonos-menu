@@ -17,7 +17,7 @@ struct Household: Identifiable, Codable, Hashable, Sendable {
     /// Useful for future grouping/ungrouping and move operations.
     var rooms: [Room]
 
-    init(
+    nonisolated init(
         id: String,
         groups: [SonosGroup] = [],
         rooms: [Room] = []

@@ -44,7 +44,8 @@ private actor RefreshStore {
     func device(for id: String) -> Device? { deviceStore[id] }
 
     func synthesize(from topology: ZoneGroupTopology) {
-        for (memberID, host) in topology.memberLocations where deviceStore[memberID] == nil {
+        for (memberID, host) in topology.memberLocations {
+            if let _ = deviceStore[memberID] { continue }
             deviceStore[memberID] = .topologyHost(id: memberID, host: host)
         }
     }
